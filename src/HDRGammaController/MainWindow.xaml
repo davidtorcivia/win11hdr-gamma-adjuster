@@ -8,34 +8,131 @@
         ShowInTaskbar="False"
         Visibility="Hidden">
 
-
+    <Window.Resources>
+        <!-- Dark/Light aware ContextMenu Style -->
+        <Style x:Key="ThemedContextMenu" TargetType="ContextMenu">
+            <Setter Property="Background" Value="{DynamicResource MenuBackground}"/>
+            <Setter Property="Foreground" Value="{DynamicResource MenuForeground}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource MenuBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="2"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ContextMenu">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        
+        <!-- Minimal MenuItem Template without icon column -->
+        <ControlTemplate x:Key="SimpleMenuItemTemplate" TargetType="MenuItem">
+            <Border x:Name="Border" 
+                    Background="{DynamicResource MenuBackground}" 
+                    BorderBrush="Transparent" 
+                    BorderThickness="0"
+                    Padding="10,6"
+                    CornerRadius="2">
+                <ContentPresenter ContentSource="Header" 
+                                  HorizontalAlignment="Left" 
+                                  VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter TargetName="Border" Property="Background" Value="{DynamicResource MenuHighlight}"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.5"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+        
+        <!-- Submenu MenuItem Template (has arrow) -->
+        <ControlTemplate x:Key="SubMenuItemTemplate" TargetType="MenuItem">
+            <Border x:Name="Border" 
+                    Background="{DynamicResource MenuBackground}" 
+                    BorderBrush="Transparent" 
+                    BorderThickness="0"
+                    Padding="10,6"
+                    CornerRadius="2">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <ContentPresenter Grid.Column="0" ContentSource="Header" 
+                                      HorizontalAlignment="Left" 
+                                      VerticalAlignment="Center"/>
+                    <Path Grid.Column="1" 
+                          x:Name="Arrow"
+                          Data="M0,0 L4,4 L0,8 Z" 
+                          Fill="{DynamicResource MenuForeground}" 
+                          VerticalAlignment="Center"
+                          Margin="8,0,0,0"
+                          Visibility="Collapsed"/>
+                    <Popup x:Name="PART_Popup"
+                           IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}"
+                           Placement="Right"
+                           AllowsTransparency="True"
+                           Focusable="False"
+                           PopupAnimation="Fade">
+                        <Border Background="{DynamicResource MenuBackground}"
+                                BorderBrush="{DynamicResource MenuBorder}"
+                                BorderThickness="1"
+                                CornerRadius="4"
+                                Padding="2">
+                            <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                        </Border>
+                    </Popup>
+                </Grid>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsHighlighted" Value="True">
+                    <Setter TargetName="Border" Property="Background" Value="{DynamicResource MenuHighlight}"/>
+                </Trigger>
+                <Trigger Property="HasItems" Value="True">
+                    <Setter TargetName="Arrow" Property="Visibility" Value="Visible"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Opacity" Value="0.5"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+        
+        <Style x:Key="ThemedMenuItem" TargetType="MenuItem">
+            <Setter Property="Background" Value="{DynamicResource MenuBackground}"/>
+            <Setter Property="Foreground" Value="{DynamicResource MenuForeground}"/>
+            <Setter Property="Header" Value="{Binding Header}" />
+            <Setter Property="Command" Value="{Binding Command}" />
+            <Setter Property="ItemsSource" Value="{Binding SubItems}" />
+            <Setter Property="Template" Value="{StaticResource SubMenuItemTemplate}"/>
+        </Style>
+        
+        <Style x:Key="ThemedSubMenuItem" TargetType="MenuItem">
+            <Setter Property="Background" Value="{DynamicResource MenuBackground}"/>
+            <Setter Property="Foreground" Value="{DynamicResource MenuForeground}"/>
+            <Setter Property="Header" Value="{Binding Header}" />
+            <Setter Property="Command" Value="{Binding Command}" />
+            <Setter Property="Template" Value="{StaticResource SimpleMenuItemTemplate}"/>
+        </Style>
+    </Window.Resources>
 
     <Grid>
         <tb:TaskbarIcon x:Name="MyNotifyIcon"
                         ToolTipText="HDR Gamma Controller"
                         MenuActivation="RightClick">
             <tb:TaskbarIcon.ContextMenu>
-                <ContextMenu ItemsSource="{Binding TrayItems}">
+                <ContextMenu ItemsSource="{Binding TrayItems}" 
+                             Style="{StaticResource ThemedContextMenu}">
                     <ContextMenu.ItemContainerStyle>
-                        <Style TargetType="MenuItem">
-                            <Setter Property="Header" Value="{Binding Header}" />
-                            <Setter Property="Command" Value="{Binding Command}" />
-                            <Setter Property="ItemsSource" Value="{Binding SubItems}" />
-                            
-                             <!-- Recursively style sub-items (Gamma 2.2, etc) -->
-                             <!-- Since they are also ActionViewModels, this same style works if we set HierarchicalDataTemplate? 
-                                  No, ItemContainerStyle applies to the *immediate* items. 
-                                  For the sub-menu, the generated MenuItems need a style.
-                                  We set ItemContainerStyle on the PARENT MenuItem?
-                             -->
-                             <Setter Property="ItemContainerStyle">
-                                <Setter.Value>
-                                    <Style TargetType="MenuItem">
-                                        <Setter Property="Header" Value="{Binding Header}" />
-                                        <Setter Property="Command" Value="{Binding Command}" />
-                                    </Style>
-                                </Setter.Value>
-                             </Setter>
+                        <Style TargetType="MenuItem" BasedOn="{StaticResource ThemedMenuItem}">
+                            <Setter Property="ItemContainerStyle" Value="{StaticResource ThemedSubMenuItem}"/>
                         </Style>
                     </ContextMenu.ItemContainerStyle>
                 </ContextMenu>

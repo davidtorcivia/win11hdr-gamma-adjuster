@@ -12,26 +12,44 @@ namespace HDRGammaController.ViewModels
         
         private readonly ProfileManager _profileManager;
         private readonly DispwinRunner _dispwinRunner;
+        private readonly int _index;
+        
+        /// <summary>
+        /// Callback to notify parent when profile changes (for persistence).
+        /// </summary>
+        public Action<MonitorInfo, GammaMode>? OnProfileChanged { get; set; }
 
-        public string Header => $"{_model.FriendlyName} ({(_model.IsHdrActive ? "HDR" : "SDR")})";
+        public string Header => $"{_index}: {_model.FriendlyName} ({(_model.IsHdrActive ? "HDR" : "SDR")})";
         
         // This view model represents a parent menu item, so it has no command but has children.
         public ICommand? Command => null;
         
         public ObservableCollection<ActionViewModel> SubItems { get; } = new ObservableCollection<ActionViewModel>();
 
-        public MonitorViewModel(MonitorInfo model, ProfileManager profileManager, DispwinRunner dispwinRunner)
+        public MonitorViewModel(MonitorInfo model, ProfileManager profileManager, DispwinRunner dispwinRunner, int index)
         {
             _model = model;
             _profileManager = profileManager;
             _dispwinRunner = dispwinRunner;
+            _index = index;
 
+            RebuildSubItems();
+        }
+        
+        private void RebuildSubItems()
+        {
+            SubItems.Clear();
+            
             if (_model.IsHdrActive)
             {
-                // HDR is active - show gamma options
-                SubItems.Add(new ActionViewModel("Gamma 2.2", new RelayCommand(_ => ApplyGamma(GammaMode.Gamma22))));
-                SubItems.Add(new ActionViewModel("Gamma 2.4", new RelayCommand(_ => ApplyGamma(GammaMode.Gamma24))));
-                SubItems.Add(new ActionViewModel("Windows Default", new RelayCommand(_ => ApplyGamma(GammaMode.WindowsDefault))));
+                // HDR is active - show gamma options with checkmarks
+                string g22Label = (_model.CurrentGamma == GammaMode.Gamma22 ? "✓ " : "   ") + "Gamma 2.2";
+                string g24Label = (_model.CurrentGamma == GammaMode.Gamma24 ? "✓ " : "   ") + "Gamma 2.4";
+                string defLabel = (_model.CurrentGamma == GammaMode.WindowsDefault ? "✓ " : "   ") + "Windows Default";
+                
+                SubItems.Add(new ActionViewModel(g22Label, new RelayCommand(_ => ApplyGamma(GammaMode.Gamma22))));
+                SubItems.Add(new ActionViewModel(g24Label, new RelayCommand(_ => ApplyGamma(GammaMode.Gamma24))));
+                SubItems.Add(new ActionViewModel(defLabel, new RelayCommand(_ => ApplyGamma(GammaMode.WindowsDefault))));
             }
             else
             {
@@ -50,6 +68,12 @@ namespace HDRGammaController.ViewModels
                 Console.WriteLine($"MonitorViewModel.ApplyGamma: Applying {mode} to {_model.DeviceName}");
                 _dispwinRunner.ApplyGamma(_model, mode, _model.SdrWhiteLevel);
                 Console.WriteLine($"MonitorViewModel.ApplyGamma: Success");
+                
+                // Rebuild sub-items to update checkmarks
+                RebuildSubItems();
+                
+                // Notify parent for persistence
+                OnProfileChanged?.Invoke(_model, mode);
              }
              catch (Exception ex)
              {

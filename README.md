@@ -5,22 +5,26 @@ A Windows System Tray application to manage HDR Gamma settings on a per-monitor 
 ## Features
 
 - **Per-Monitor Gamma Control**: Apply Gamma 2.2, 2.4, or Windows Default independently for each HDR monitor
-- **System Tray Integration**: Unobtrusive background operation with custom icon
+- **Real Monitor Names**: Displays actual monitor names from EDID (e.g., "LG OLED TV") instead of generic identifiers
+- **Profile Persistence**: Remembers your gamma settings per monitor and restores them automatically on startup
+- **System Tray Integration**: Unobtrusive background operation with dark/light mode support
 - **Start with Windows**: Toggle auto-start from the tray menu
 - **Global Hotkeys**: Quickly switch profiles on the focused monitor
-  - `Win + Shift + 1`: Gamma 2.2
-  - `Win + Shift + 2`: Gamma 2.4
-  - `Win + Shift + 3`: Windows Default
-- **Panic Mode**: Instantly clear all gamma tables (`Ctrl + Alt + Shift + R`)
+  - `Win + Shift + F1`: Gamma 2.2
+  - `Win + Shift + F2`: Gamma 2.4
+  - `Win + Shift + F3`: Windows Default
+  - `Win + Shift + F4`: Panic Mode (clear all gamma tables)
 - **Auto-Recovery**: Automatically reapplies settings after display sleep/wake or configuration changes
 - **HDR-Aware**: Only shows gamma options for HDR-active monitors (SDR monitors display informational message)
+- **Auto-Download ArgyllCMS**: Automatically downloads required ArgyllCMS binaries if not found
 
 ## Requirements
 
 1. **Windows 10/11** with HDR-capable display(s)
 2. **ArgyllCMS** (specifically `dispwin.exe`):
-   - If you have **DisplayCAL** installed, the app automatically detects its bundled Argyll binaries
-   - Otherwise, download from [ArgyllCMS](https://www.argyllcms.com/) and place `dispwin.exe` in the app folder
+   - The app will **automatically download** ArgyllCMS if not detected
+   - Or if you have **DisplayCAL** installed, the app detects its bundled Argyll binaries
+   - Or download from [ArgyllCMS](https://www.argyllcms.com/) and place `dispwin.exe` in the app folder
 3. **.NET 8.0 Runtime** (for minimal build) or no dependencies (for self-contained build)
 
 ## Installation
@@ -36,7 +40,7 @@ A Windows System Tray application to manage HDR Gamma settings on a per-monitor 
 
 ```powershell
 # Clone the repository
-git clone https://github.com/your-repo/win11hdr-gamma-adjuster.git
+git clone https://github.com/davidtorcivia/win11hdr-gamma-adjuster.git
 cd win11hdr-gamma-adjuster
 
 # Build minimal (requires .NET 8 runtime, ~1.4 MB)
@@ -49,12 +53,14 @@ dotnet publish src/HDRGammaController -c Release -r win-x64 --self-contained tru
 ## Usage
 
 1. **Launch** the application - it appears in the system tray
-2. **Right-click** the tray icon to see your monitors
+2. **Right-click** the tray icon to see your monitors (numbered with actual names)
 3. **Select a gamma mode** for each HDR monitor:
    - **Gamma 2.2**: General PC use, most content
    - **Gamma 2.4**: BT.1886 / dark room / film mastering
    - **Windows Default**: Native piecewise sRGB (bypass)
 4. **Enable auto-start** via "Start with Windows" menu option
+
+Your selections are automatically saved and restored on next launch.
 
 ## How It Works
 
@@ -78,4 +84,3 @@ The LUTs are applied via ArgyllCMS's `dispwin` utility.
 This project is licensed under the MIT License.
 
 ArgyllCMS is licensed under the AGPL v3 license. This application calls `dispwin` as a separate process and does not link against AGPL code.
-

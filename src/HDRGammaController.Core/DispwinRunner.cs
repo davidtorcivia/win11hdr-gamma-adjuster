@@ -1,8 +1,11 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
+using System.Net.Http;
 using System.Text;
 using System.Globalization;
+using System.Threading.Tasks;
 using System.Windows;
 
 namespace HDRGammaController.Core
@@ -10,6 +13,14 @@ namespace HDRGammaController.Core
     public class DispwinRunner
     {
         private string _dispwinPath;
+        
+        // URL for ArgyllCMS Windows binaries
+        private const string ArgyllDownloadUrl = "https://www.argyllcms.com/Argyll_V3.3.0_win64_exe.zip";
+        private const string ArgyllVersion = "Argyll_V3.3.0";
+        
+        private static readonly string LocalArgyllDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "HDRGammaController", "Argyll");
 
         public DispwinRunner()
         {
@@ -23,10 +34,14 @@ namespace HDRGammaController.Core
             string local = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "dispwin.exe");
             if (File.Exists(local)) return local;
             
-            // 2. Search in PATH
+            // 2. Search in our local app data directory
+            string localAppData = Path.Combine(LocalArgyllDir, "bin", "dispwin.exe");
+            if (File.Exists(localAppData)) return localAppData;
+            
+            // 3. Search in PATH
             if (IsInPath("dispwin.exe")) return "dispwin.exe";
             
-            // 3. Search common locations (DisplayCAL, ArgyllCMS)
+            // 4. Search common locations (DisplayCAL, ArgyllCMS)
             var commonPaths = new[]
             {
                 @"C:\Program Files (x86)\DisplayCAL\Argyll\bin\dispwin.exe",
@@ -40,7 +55,7 @@ namespace HDRGammaController.Core
                 if (File.Exists(path)) return path;
             }
             
-            // 4. Search DisplayCAL's AppData download location
+            // 5. Search DisplayCAL's AppData download location
             try
             {
                 string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
@@ -91,21 +106,121 @@ namespace HDRGammaController.Core
             _dispwinPath = FindDispwin();
             if (!string.IsNullOrEmpty(_dispwinPath)) return true;
 
-            // Prompt user
+            // Offer to auto-download
             var result = MessageBox.Show(
                 "ArgyllCMS 'dispwin.exe' not found.\n\n" +
                 "This application requires ArgyllCMS to apply gamma tables.\n" +
-                "Please download it from argyllcms.com and place 'dispwin.exe' in the application folder.\n\n" +
-                "Would you like to open the download page?",
+                "Would you like to download ArgyllCMS automatically?\n\n" +
+                "(This will download ~15MB from argyllcms.com)",
                 "HDR Gamma Controller - Missing Dependency",
-                MessageBoxButton.YesNo, MessageBoxImage.Warning);
+                MessageBoxButton.YesNo, MessageBoxImage.Question);
                 
             if (result == MessageBoxResult.Yes)
             {
-                try { Process.Start(new ProcessStartInfo("https://www.argyllcms.com/downloadwin.html") { UseShellExecute = true }); } catch {}
+                // Run download async but block UI with a wait dialog
+                bool success = false;
+                try
+                {
+                    var downloadTask = DownloadArgyllAsync();
+                    // Simple blocking wait - in production would show progress dialog
+                    downloadTask.Wait();
+                    success = downloadTask.Result;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"DispwinRunner: Download failed: {ex.Message}");
+                    MessageBox.Show($"Download failed:\n{ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+                
+                if (success)
+                {
+                    _dispwinPath = FindDispwin();
+                    if (!string.IsNullOrEmpty(_dispwinPath))
+                    {
+                        MessageBox.Show("ArgyllCMS downloaded successfully!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+                        return true;
+                    }
+                }
             }
             
             return false;
+        }
+        
+        /// <summary>
+        /// Downloads and extracts ArgyllCMS binaries to LocalApplicationData.
+        /// </summary>
+        public async Task<bool> DownloadArgyllAsync()
+        {
+            try
+            {
+                Console.WriteLine($"DispwinRunner: Downloading ArgyllCMS from {ArgyllDownloadUrl}");
+                
+                // Create temp directory for download
+                string tempDir = Path.Combine(Path.GetTempPath(), "HDRGammaController_ArgyllDownload");
+                Directory.CreateDirectory(tempDir);
+                string zipPath = Path.Combine(tempDir, "argyll.zip");
+                
+                // Download
+                using (var client = new HttpClient())
+                {
+                    client.Timeout = TimeSpan.FromMinutes(5);
+                    var response = await client.GetAsync(ArgyllDownloadUrl);
+                    response.EnsureSuccessStatusCode();
+                    
+                    using (var fs = new FileStream(zipPath, FileMode.Create))
+                    {
+                        await response.Content.CopyToAsync(fs);
+                    }
+                }
+                
+                Console.WriteLine($"DispwinRunner: Downloaded to {zipPath}");
+                
+                // Extract
+                Directory.CreateDirectory(LocalArgyllDir);
+                
+                // The ZIP contains Argyll_V3.3.0/bin/dispwin.exe
+                // We want to extract to LocalArgyllDir so it becomes LocalArgyllDir/bin/dispwin.exe
+                using (var archive = ZipFile.OpenRead(zipPath))
+                {
+                    foreach (var entry in archive.Entries)
+                    {
+                        // Strip the first directory component (Argyll_V3.3.0/)
+                        string entryPath = entry.FullName;
+                        if (entryPath.StartsWith(ArgyllVersion + "/") || entryPath.StartsWith(ArgyllVersion + "\\"))
+                        {
+                            entryPath = entryPath.Substring(ArgyllVersion.Length + 1);
+                        }
+                        
+                        if (string.IsNullOrEmpty(entryPath)) continue;
+                        
+                        string destPath = Path.Combine(LocalArgyllDir, entryPath);
+                        
+                        if (entry.FullName.EndsWith("/") || entry.FullName.EndsWith("\\"))
+                        {
+                            // Directory
+                            Directory.CreateDirectory(destPath);
+                        }
+                        else
+                        {
+                            // File
+                            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+                            entry.ExtractToFile(destPath, overwrite: true);
+                        }
+                    }
+                }
+                
+                Console.WriteLine($"DispwinRunner: Extracted to {LocalArgyllDir}");
+                
+                // Cleanup temp
+                try { Directory.Delete(tempDir, true); } catch {}
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"DispwinRunner: DownloadArgyllAsync failed: {ex}");
+                throw;
+            }
         }
 
         public void ApplyGamma(MonitorInfo monitor, GammaMode mode, double whiteLevel)

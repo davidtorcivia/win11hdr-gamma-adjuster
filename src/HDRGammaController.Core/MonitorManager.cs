@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32;
 using HDRGammaController.Interop;
 
 namespace HDRGammaController.Core
@@ -172,25 +174,131 @@ namespace HDRGammaController.Core
                 // This gets the Monitor info attached to the adapter output
                 // displayDevice.DeviceID looks like: MONITOR\GSM5B08\{GUID}
                 monitor.MonitorDevicePath = displayDevice.DeviceID;
-                monitor.FriendlyName = displayDevice.DeviceString;
+                
+                // Try to get the real monitor name from EDID in registry
+                string? edidName = GetMonitorNameFromEdid(displayDevice.DeviceID);
+                if (!string.IsNullOrEmpty(edidName))
+                {
+                    monitor.FriendlyName = edidName;
+                    Console.WriteLine($"MonitorManager: Got EDID name '{edidName}' for {monitor.DeviceName}");
+                }
+                else
+                {
+                    // Fallback to GDI name (usually "Generic PnP Monitor")
+                    monitor.FriendlyName = displayDevice.DeviceString;
+                }
             }
-            else
+        }
+        
+        /// <summary>
+        /// Attempts to read the monitor's friendly name from the EDID data in the registry.
+        /// </summary>
+        private string? GetMonitorNameFromEdid(string deviceId)
+        {
+            try
             {
-                // Try enumerating adapter first
-                var adapterDevice = new User32.DISPLAY_DEVICE();
-                adapterDevice.Initialize();
+                // DeviceID format: MONITOR\{ManufacturerID}{ProductCode}\{InstanceID}
+                // e.g., MONITOR\GSM5B08\{4d36e96e-e325-11ce-bfc1-08002be10318}\0008
+                // We need to find the corresponding registry key under:
+                // HKLM\SYSTEM\CurrentControlSet\Enum\DISPLAY\{ManufacturerID}{ProductCode}\{InstanceID}\Device Parameters\EDID
                 
-                // We access the device by name, but EnumDisplayDevices expects lpDevice to be NULL for enum all, or name for specific.
-                // If we pass monitor.DeviceName, we get the Adapter info usually?
-                // Wait. EnumDisplayDevices(monitor.DeviceName, 0...) gets the first monitor attached to that display output.
+                if (string.IsNullOrEmpty(deviceId)) return null;
                 
-                // Standard flow:
-                // 1. EnumDisplayDevices(NULL, i) -> Adapter (\\.\DISPLAY1)
-                // 2. EnumDisplayDevices(Adapter.DeviceName, 0) -> Monitor (MONITOR\...)
+                // Parse the device ID to extract manufacturer and product code
+                string[] parts = deviceId.Split('\\');
+                if (parts.Length < 2) return null;
                 
-                // Since we already have DeviceName from DXGI (\\.\DISPLAY1), we can just call Step 2.
-                // Which we did above.
+                string monitorId = parts[1]; // e.g., "GSM5B08"
+                
+                // Search in DISPLAY registry for matching monitors
+                using (var displayKey = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Enum\DISPLAY"))
+                {
+                    if (displayKey == null) return null;
+                    
+                    foreach (string subKeyName in displayKey.GetSubKeyNames())
+                    {
+                        if (!subKeyName.Equals(monitorId, StringComparison.OrdinalIgnoreCase)) continue;
+                        
+                        using (var monitorKey = displayKey.OpenSubKey(subKeyName))
+                        {
+                            if (monitorKey == null) continue;
+                            
+                            foreach (string instanceName in monitorKey.GetSubKeyNames())
+                            {
+                                using (var instanceKey = monitorKey.OpenSubKey(instanceName))
+                                {
+                                    if (instanceKey == null) continue;
+                                    
+                                    using (var paramsKey = instanceKey.OpenSubKey("Device Parameters"))
+                                    {
+                                        if (paramsKey == null) continue;
+                                        
+                                        byte[]? edid = paramsKey.GetValue("EDID") as byte[];
+                                        if (edid != null && edid.Length > 0)
+                                        {
+                                            string? name = ParseEdidForName(edid);
+                                            if (!string.IsNullOrEmpty(name))
+                                            {
+                                                return name;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"MonitorManager: Error reading EDID: {ex.Message}");
+            }
+            
+            return null;
+        }
+        
+        /// <summary>
+        /// Parses EDID data to extract the monitor name from descriptor blocks.
+        /// </summary>
+        private string? ParseEdidForName(byte[] edid)
+        {
+            // EDID is 128 bytes minimum
+            // Detailed timing descriptors start at byte 54
+            // Each descriptor is 18 bytes
+            // Descriptor type 0xFC = Monitor name
+            
+            if (edid.Length < 128) return null;
+            
+            // Check for valid EDID header
+            if (edid[0] != 0x00 || edid[1] != 0xFF || edid[2] != 0xFF || edid[3] != 0xFF ||
+                edid[4] != 0xFF || edid[5] != 0xFF || edid[6] != 0xFF || edid[7] != 0x00)
+            {
+                return null;
+            }
+            
+            // Search through the 4 descriptor blocks (starting at offsets 54, 72, 90, 108)
+            for (int offset = 54; offset <= 108; offset += 18)
+            {
+                // Check if this is a text descriptor (bytes 0-3 are 0x00, byte 3 is descriptor type)
+                if (edid[offset] == 0x00 && edid[offset + 1] == 0x00 && 
+                    edid[offset + 2] == 0x00 && edid[offset + 3] == 0xFC)
+                {
+                    // Bytes 5-17 contain the monitor name (13 characters max)
+                    var nameBytes = new byte[13];
+                    Array.Copy(edid, offset + 5, nameBytes, 0, 13);
+                    
+                    string name = Encoding.ASCII.GetString(nameBytes);
+                    // Trim trailing newlines and spaces
+                    name = name.TrimEnd('\n', '\r', ' ');
+                    
+                    if (!string.IsNullOrWhiteSpace(name))
+                    {
+                        return name;
+                    }
+                }
+            }
+            
+            return null;
         }
     }
 }

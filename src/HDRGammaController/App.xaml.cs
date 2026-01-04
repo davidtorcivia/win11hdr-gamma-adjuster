@@ -1,6 +1,8 @@
 using System;
 using System.Windows;
+using System.Windows.Media;
 using Hardcodet.Wpf.TaskbarNotification;
+using HDRGammaController.Services;
 
 namespace HDRGammaController
 {
@@ -13,6 +15,9 @@ namespace HDRGammaController
             {
                 Console.WriteLine("App.OnStartup: Starting...");
                 base.OnStartup(e);
+                
+                // Apply theme based on Windows settings
+                ApplyTheme();
 
                 // Create MainWindow (Settings) but valid properties
                 Console.WriteLine("App.OnStartup: Creating MainWindow...");
@@ -25,6 +30,27 @@ namespace HDRGammaController
                 System.IO.File.WriteAllText("startup_log.txt", ex.ToString());
                 // MessageBox.Show("Startup Error: " + ex.Message);
                 Shutdown(-1);
+            }
+        }
+        
+        private void ApplyTheme()
+        {
+            bool isDark = ThemeDetector.IsDarkMode();
+            Console.WriteLine($"App.ApplyTheme: Dark mode = {isDark}");
+            
+            if (isDark)
+            {
+                Resources["MenuBackground"] = Resources["DarkMenuBackground"];
+                Resources["MenuForeground"] = Resources["DarkMenuForeground"];
+                Resources["MenuBorder"] = Resources["DarkMenuBorder"];
+                Resources["MenuHighlight"] = Resources["DarkMenuHighlight"];
+            }
+            else
+            {
+                Resources["MenuBackground"] = Resources["LightMenuBackground"];
+                Resources["MenuForeground"] = Resources["LightMenuForeground"];
+                Resources["MenuBorder"] = Resources["LightMenuBorder"];
+                Resources["MenuHighlight"] = Resources["LightMenuHighlight"];
             }
         }
 

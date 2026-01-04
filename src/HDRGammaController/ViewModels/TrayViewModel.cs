@@ -17,6 +17,7 @@ namespace HDRGammaController.ViewModels
         private readonly MonitorManager _monitorManager;
         private readonly ProfileManager _profileManager;
         private readonly DispwinRunner _dispwinRunner;
+        private readonly SettingsManager _settingsManager;
         private readonly HotkeyManager? _hotkeyManager;
         
         private readonly Dictionary<int, Action<MonitorInfo>> _hotkeyActions = new Dictionary<int, Action<MonitorInfo>>();
@@ -33,7 +34,8 @@ namespace HDRGammaController.ViewModels
         public TrayViewModel(HotkeyManager? hotkeyManager = null)
         {
             _monitorManager = new MonitorManager();
-            // Assuems template is in the same directory (needs to be sourced by user)
+            _settingsManager = new SettingsManager();
+            // Assumes template is in the same directory (needs to be sourced by user)
             string profileTemplatePath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "srgb_to_gamma2p2_100_mhc2.icm");
             _profileManager = new ProfileManager(profileTemplatePath);
             _dispwinRunner = new DispwinRunner(); // Auto-detects
@@ -44,6 +46,9 @@ namespace HDRGammaController.ViewModels
             StartupCommand = new RelayCommand(_ => ToggleStartup());
 
             RefreshMonitors();
+            
+            // Apply saved profiles on startup
+            ApplyAll();
             
             if (_hotkeyManager != null)
             {
@@ -56,20 +61,20 @@ namespace HDRGammaController.ViewModels
         {
             if (_hotkeyManager == null) return;
 
-            // Win+Shift+1 -> Gamma 2.2
-            int id22 = _hotkeyManager.Register(Key.D1, ModifierKeys.Windows | ModifierKeys.Shift);
+            // Win+Shift+F1 -> Gamma 2.2
+            int id22 = _hotkeyManager.Register(Key.F1, ModifierKeys.Windows | ModifierKeys.Shift);
             if (id22 > 0) _hotkeyActions[id22] = m => ApplyProfile(m, GammaMode.Gamma22);
             
-            // Win+Shift+2 -> Gamma 2.4
-            int id24 = _hotkeyManager.Register(Key.D2, ModifierKeys.Windows | ModifierKeys.Shift);
+            // Win+Shift+F2 -> Gamma 2.4
+            int id24 = _hotkeyManager.Register(Key.F2, ModifierKeys.Windows | ModifierKeys.Shift);
             if (id24 > 0) _hotkeyActions[id24] = m => ApplyProfile(m, GammaMode.Gamma24);
             
-            // Win+Shift+3 -> Default
-            int idDef = _hotkeyManager.Register(Key.D3, ModifierKeys.Windows | ModifierKeys.Shift);
+            // Win+Shift+F3 -> Default
+            int idDef = _hotkeyManager.Register(Key.F3, ModifierKeys.Windows | ModifierKeys.Shift);
             if (idDef > 0) _hotkeyActions[idDef] = m => ApplyProfile(m, GammaMode.WindowsDefault);
             
-            // Panic: Ctrl+Alt+Shift+R
-            _panicId = _hotkeyManager.Register(Key.R, ModifierKeys.Control | ModifierKeys.Alt | ModifierKeys.Shift);
+            // Panic: Win+Shift+F4
+            _panicId = _hotkeyManager.Register(Key.F4, ModifierKeys.Windows | ModifierKeys.Shift);
         }
 
         private void OnHotkeyPressed(int id)
@@ -128,6 +133,7 @@ namespace HDRGammaController.ViewModels
             if (!string.IsNullOrEmpty(monitor.MonitorDevicePath))
             {
                  _savedConfigs[monitor.MonitorDevicePath] = monitor;
+                 _settingsManager.SetProfileForMonitor(monitor.MonitorDevicePath, mode);
             }
 
             try
@@ -135,6 +141,9 @@ namespace HDRGammaController.ViewModels
                 _dispwinRunner.ApplyGamma(monitor, mode, monitor.SdrWhiteLevel);
             }
             catch {}
+            
+            // Refresh to update checkmarks
+            RefreshMonitors();
         }
         
         private void ApplyAll()
@@ -168,11 +177,19 @@ namespace HDRGammaController.ViewModels
             StartupManager.IsStartupEnabled = !StartupManager.IsStartupEnabled;
             RefreshMonitors(); // Refresh to update the checkmark
         }
+        
+        private void OnMonitorProfileChanged(MonitorInfo monitor, GammaMode mode)
+        {
+            // Persist to settings
+            if (!string.IsNullOrEmpty(monitor.MonitorDevicePath))
+            {
+                _settingsManager.SetProfileForMonitor(monitor.MonitorDevicePath, mode);
+            }
+        }
 
         public void RefreshMonitors()
         {
             Console.WriteLine("TrayViewModel: Refreshing monitors...");
-            // Capture existing monitor ViewModels if possible? No, full refresh is safer for ID changes.
             TrayItems.Clear();
             var monitors = _monitorManager.EnumerateMonitors();
             Console.WriteLine($"TrayViewModel: Enumerated {monitors.Count} monitors.");
@@ -183,12 +200,19 @@ namespace HDRGammaController.ViewModels
             }
             else
             {
+                int index = 1;
                 foreach (var m in monitors)
                 {
-                    // Restore persistent state
-                    if (!string.IsNullOrEmpty(m.MonitorDevicePath) && 
+                    // Restore persistent state from settings file
+                    var savedMode = _settingsManager.GetProfileForMonitor(m.MonitorDevicePath);
+                    if (savedMode.HasValue)
+                    {
+                        m.CurrentGamma = savedMode.Value;
+                    }
+                    else if (!string.IsNullOrEmpty(m.MonitorDevicePath) && 
                         _savedConfigs.TryGetValue(m.MonitorDevicePath, out var saved))
                     {
+                        // Fallback to in-memory cache
                         m.CurrentGamma = saved.CurrentGamma;
                         m.SdrWhiteLevel = saved.SdrWhiteLevel;
                     }
@@ -199,7 +223,10 @@ namespace HDRGammaController.ViewModels
                         _savedConfigs[m.MonitorDevicePath] = m;
                     }
 
-                    TrayItems.Add(new MonitorViewModel(m, _profileManager, _dispwinRunner));
+                    var vm = new MonitorViewModel(m, _profileManager, _dispwinRunner, index);
+                    vm.OnProfileChanged = OnMonitorProfileChanged;
+                    TrayItems.Add(vm);
+                    index++;
                 }
             }
             
