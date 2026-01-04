@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Windows.Input;
 using HDRGammaController.Core;
@@ -12,12 +13,23 @@ namespace HDRGammaController.ViewModels
         
         private readonly ProfileManager _profileManager;
         private readonly DispwinRunner _dispwinRunner;
+        private readonly SettingsManager? _settingsManager;
         private readonly int _index;
+        
+        /// <summary>
+        /// Callback to get all monitors for settings window.
+        /// </summary>
+        public Func<List<MonitorInfo>>? GetAllMonitors { get; set; }
         
         /// <summary>
         /// Callback to notify parent when profile changes (for persistence).
         /// </summary>
         public Action<MonitorInfo, GammaMode>? OnProfileChanged { get; set; }
+        
+        /// <summary>
+        /// Callback to apply gamma with calibration settings.
+        /// </summary>
+        public Action<MonitorInfo, GammaMode, CalibrationSettings>? OnApplyWithCalibration { get; set; }
 
         public string Header => $"{_index}: {_model.FriendlyName} ({(_model.IsHdrActive ? "HDR" : "SDR")})";
         
@@ -26,12 +38,13 @@ namespace HDRGammaController.ViewModels
         
         public ObservableCollection<ActionViewModel> SubItems { get; } = new ObservableCollection<ActionViewModel>();
 
-        public MonitorViewModel(MonitorInfo model, ProfileManager profileManager, DispwinRunner dispwinRunner, int index)
+        public MonitorViewModel(MonitorInfo model, ProfileManager profileManager, DispwinRunner dispwinRunner, int index, SettingsManager? settingsManager = null)
         {
             _model = model;
             _profileManager = profileManager;
             _dispwinRunner = dispwinRunner;
             _index = index;
+            _settingsManager = settingsManager;
 
             RebuildSubItems();
         }
@@ -50,12 +63,36 @@ namespace HDRGammaController.ViewModels
                 SubItems.Add(new ActionViewModel(g22Label, new RelayCommand(_ => ApplyGamma(GammaMode.Gamma22))));
                 SubItems.Add(new ActionViewModel(g24Label, new RelayCommand(_ => ApplyGamma(GammaMode.Gamma24))));
                 SubItems.Add(new ActionViewModel(defLabel, new RelayCommand(_ => ApplyGamma(GammaMode.WindowsDefault))));
+                
+                // Add settings option
+                SubItems.Add(new ActionViewModel("───────────", null));
+                SubItems.Add(new ActionViewModel("⚙ Settings...", new RelayCommand(_ => OpenSettings())));
             }
             else
             {
                 // HDR not active - gamma correction not applicable
                 SubItems.Add(new ActionViewModel("(HDR not active)", null));
             }
+        }
+        
+        private void OpenSettings()
+        {
+            if (_settingsManager == null) return;
+            
+            var allMonitors = GetAllMonitors?.Invoke() ?? new List<MonitorInfo> { _model };
+            
+            var settingsWindow = new SettingsWindow(_model, allMonitors, _settingsManager, 
+                (monitor, mode, calibration) =>
+                {
+                    monitor.CurrentGamma = mode;
+                    _dispwinRunner.ApplyGamma(monitor, mode, monitor.SdrWhiteLevel, calibration);
+                    if (monitor.MonitorDevicePath == _model.MonitorDevicePath)
+                    {
+                        RebuildSubItems();
+                    }
+                    OnProfileChanged?.Invoke(monitor, mode);
+                });
+            settingsWindow.ShowDialog();
         }
 
         private void ApplyGamma(GammaMode mode)

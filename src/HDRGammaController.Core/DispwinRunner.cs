@@ -225,7 +225,12 @@ namespace HDRGammaController.Core
 
         public void ApplyGamma(MonitorInfo monitor, GammaMode mode, double whiteLevel)
         {
-            Console.WriteLine($"DispwinRunner.ApplyGamma: monitor={monitor.DeviceName}, mode={mode}, whiteLevel={whiteLevel}");
+            ApplyGamma(monitor, mode, whiteLevel, CalibrationSettings.Default);
+        }
+        
+        public void ApplyGamma(MonitorInfo monitor, GammaMode mode, double whiteLevel, CalibrationSettings calibration)
+        {
+            Console.WriteLine($"DispwinRunner.ApplyGamma: monitor={monitor.DeviceName}, mode={mode}, whiteLevel={whiteLevel}, hasCalibration={calibration.HasAdjustments}");
             
             if (!EnsureConfigured())
             {
@@ -233,12 +238,12 @@ namespace HDRGammaController.Core
                 return;
             }
 
-            // 1. Generate LUT (ensure we use the correct white level)
-            double[] lut = LutGenerator.GenerateLut(mode, whiteLevel);
-            Console.WriteLine($"DispwinRunner.ApplyGamma: Generated LUT with {lut.Length} entries");
+            // 1. Generate per-channel LUTs
+            var (lutR, lutG, lutB, _) = LutGenerator.GenerateLut(mode, whiteLevel, calibration);
+            Console.WriteLine($"DispwinRunner.ApplyGamma: Generated LUTs with {lutR.Length} entries");
 
             // 2. Create .cal file content
-            string calContent = GenerateCalContent(lut);
+            string calContent = GenerateCalContent(lutR, lutG, lutB);
             string tempFile = Path.GetTempFileName();
             string calFile = Path.ChangeExtension(tempFile, ".cal");
             Console.WriteLine($"DispwinRunner.ApplyGamma: Created temp file={calFile}");
@@ -310,7 +315,7 @@ namespace HDRGammaController.Core
             }
         }
 
-        private string GenerateCalContent(double[] lut)
+        private string GenerateCalContent(double[] lutR, double[] lutG, double[] lutB)
         {
             var sb = new StringBuilder();
             // Argyll CAL format - must start with "CAL" identifier
@@ -327,16 +332,15 @@ namespace HDRGammaController.Core
             sb.AppendLine("RGB_I RGB_R RGB_G RGB_B");
             sb.AppendLine("END_DATA_FORMAT");
             sb.AppendLine();
-            sb.AppendLine($"NUMBER_OF_SETS {lut.Length}");
+            sb.AppendLine($"NUMBER_OF_SETS {lutR.Length}");
             sb.AppendLine("BEGIN_DATA");
             
-            for(int i=0; i<lut.Length; i++)
+            for(int i=0; i<lutR.Length; i++)
             {
-                double input = i / (double)(lut.Length - 1);
-                double val = lut[i];
-                // Format: Input R G B (same value for all channels = grey ramp)
+                double input = i / (double)(lutR.Length - 1);
+                // Per-channel RGB values
                 sb.AppendLine(string.Format(CultureInfo.InvariantCulture, 
-                    "{0:G6} {1:G6} {1:G6} {1:G6}", input, val));
+                    "{0:G6} {1:G6} {2:G6} {3:G6}", input, lutR[i], lutG[i], lutB[i]));
             }
             
             sb.AppendLine("END_DATA");

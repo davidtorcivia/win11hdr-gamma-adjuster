@@ -223,8 +223,9 @@ namespace HDRGammaController.ViewModels
                         _savedConfigs[m.MonitorDevicePath] = m;
                     }
 
-                    var vm = new MonitorViewModel(m, _profileManager, _dispwinRunner, index);
+                    var vm = new MonitorViewModel(m, _profileManager, _dispwinRunner, index, _settingsManager);
                     vm.OnProfileChanged = OnMonitorProfileChanged;
+                    vm.GetAllMonitors = () => monitors;
                     TrayItems.Add(vm);
                     index++;
                 }

@@ -5,72 +5,126 @@ namespace HDRGammaController.Core
     public static class LutGenerator
     {
         /// <summary>
-        /// Generates a 1024-point 1D LUT for HDR gamma correction.
+        /// Generates a 1024-point 1D LUT for HDR gamma correction (single channel, no calibration).
+        /// </summary>
+        public static double[] GenerateLut(GammaMode gammaMode, double sdrWhiteLevel)
+        {
+            return GenerateLut(gammaMode, sdrWhiteLevel, CalibrationSettings.Default).Grey;
+        }
+        
+        /// <summary>
+        /// Generates per-channel 1024-point 1D LUTs for HDR gamma correction with calibration.
         /// </summary>
         /// <param name="gammaMode">The target gamma curve (2.2 or 2.4).</param>
         /// <param name="sdrWhiteLevel">The SDR white level in nits (e.g. 80, 200, 480).</param>
-        /// <returns>Array of 1024 doubles representing the output PQ signal [0-1] for each input index.</returns>
-        public static double[] GenerateLut(GammaMode gammaMode, double sdrWhiteLevel)
+        /// <param name="calibration">Calibration settings for dimming, temp, tint, RGB.</param>
+        /// <returns>Per-channel LUTs (R, G, B) and a Grey reference.</returns>
+        public static (double[] R, double[] G, double[] B, double[] Grey) GenerateLut(
+            GammaMode gammaMode, 
+            double sdrWhiteLevel, 
+            CalibrationSettings calibration)
         {
-            double[] lut = new double[1024];
+            double[] lutR = new double[1024];
+            double[] lutG = new double[1024];
+            double[] lutB = new double[1024];
+            double[] lutGrey = new double[1024];
 
-            if (gammaMode == GammaMode.WindowsDefault)
+            if (gammaMode == GammaMode.WindowsDefault && !calibration.HasAdjustments)
             {
                 // Identity LUT
                 for (int i = 0; i < 1024; i++)
                 {
-                    lut[i] = i / 1023.0;
+                    double val = i / 1023.0;
+                    lutR[i] = val;
+                    lutG[i] = val;
+                    lutB[i] = val;
+                    lutGrey[i] = val;
                 }
-                return lut;
+                return (lutR, lutG, lutB, lutGrey);
             }
 
-            double gamma = gammaMode == GammaMode.Gamma24 ? 2.4 : 2.2;
-            double blackLevel = 0.0; // Assuming perfect black for calculation
+            double gamma = gammaMode switch
+            {
+                GammaMode.Gamma24 => 2.4,
+                GammaMode.Gamma22 => 2.2,
+                _ => 1.0 // WindowsDefault with calibration
+            };
+            
+            double blackLevel = 0.0;
 
             for (int i = 0; i < 1024; i++)
             {
-                double normalized = i / 1023.0; // Input PQ signal [0-1]
+                double normalized = i / 1023.0;
 
-                // 1. PQ EOTF -> linear nits (Input Light)
+                // 1. PQ EOTF -> linear nits
                 double linear = TransferFunctions.PqEotf(normalized);
 
-                // 2. Input Light -> Simulated Signal (using inverse sRGB Piecewise)
-                // This asks: "If this light were produced by an sRGB display, what was the signal?"
-                double srgbNormalized = TransferFunctions.SrgbInverseEotf(linear, sdrWhiteLevel, blackLevel);
-
-                // 3. Simulated Signal -> Desired Output Light (Power Law)
-                // Apply the desired pure power gamma to that signal
-                double gammaApplied = Math.Pow(srgbNormalized, gamma);
-
-                // 4. Desired Output Light -> Absolute Nits
-                // Scale back to nits
-                double outputLinear = blackLevel + (sdrWhiteLevel - blackLevel) * gammaApplied;
-
-                // 5. Absolute Nits -> Output Signal (PQ)
-                // Encode for the HDR display
-                double output = TransferFunctions.PqInverseEotf(outputLinear);
-
-                // 6. HDR Headroom Preservation
-                // Apply full gamma correction in SDR range (0 to SDR white)
-                // Only blend toward bypass ABOVE SDR white to preserve HDR highlights
-                if (linear <= sdrWhiteLevel)
+                double outputR, outputG, outputB;
+                
+                if (gammaMode == GammaMode.WindowsDefault)
                 {
-                    // SDR range: apply full gamma correction
-                    lut[i] = output;
+                    // No gamma correction, just apply calibration
+                    outputR = outputG = outputB = linear;
                 }
                 else
                 {
-                    // HDR headroom region: gradually blend toward passthrough
-                    // This ensures HDR highlights are not clipped or distorted
+                    // 2. Input Light -> Simulated Signal (inverse sRGB)
+                    double srgbNormalized = TransferFunctions.SrgbInverseEotf(linear, sdrWhiteLevel, blackLevel);
+
+                    // 3. Apply gamma
+                    double gammaApplied = Math.Pow(srgbNormalized, gamma);
+
+                    // 4. Scale to output nits
+                    double outputLinear = blackLevel + (sdrWhiteLevel - blackLevel) * gammaApplied;
+                    
+                    outputR = outputG = outputB = outputLinear;
+                }
+
+                // 5. Apply calibration adjustments (dimming, temp, tint, RGB)
+                if (calibration.HasAdjustments)
+                {
+                    // Normalize to 0-1 range for calibration
+                    double normR = Math.Clamp(outputR / sdrWhiteLevel, 0, 1);
+                    double normG = Math.Clamp(outputG / sdrWhiteLevel, 0, 1);
+                    double normB = Math.Clamp(outputB / sdrWhiteLevel, 0, 1);
+                    
+                    var (adjR, adjG, adjB) = ColorAdjustments.ApplyCalibration(normR, normG, normB, calibration);
+                    
+                    // Scale back to nits
+                    outputR = adjR * sdrWhiteLevel;
+                    outputG = adjG * sdrWhiteLevel;
+                    outputB = adjB * sdrWhiteLevel;
+                }
+
+                // 6. Encode to PQ
+                double pqR = TransferFunctions.PqInverseEotf(outputR);
+                double pqG = TransferFunctions.PqInverseEotf(outputG);
+                double pqB = TransferFunctions.PqInverseEotf(outputB);
+                double pqGrey = TransferFunctions.PqInverseEotf((outputR + outputG + outputB) / 3.0);
+
+                // 7. HDR Headroom Preservation
+                if (linear <= sdrWhiteLevel)
+                {
+                    lutR[i] = pqR;
+                    lutG[i] = pqG;
+                    lutB[i] = pqB;
+                    lutGrey[i] = pqGrey;
+                }
+                else
+                {
+                    // Blend toward passthrough in HDR headroom
                     double headroomRange = 10000.0 - sdrWhiteLevel;
                     double headroomPosition = (linear - sdrWhiteLevel) / headroomRange;
                     double blendFactor = Math.Min(1.0, headroomPosition);
                     
-                    lut[i] = output + (normalized - output) * blendFactor;
+                    lutR[i] = pqR + (normalized - pqR) * blendFactor;
+                    lutG[i] = pqG + (normalized - pqG) * blendFactor;
+                    lutB[i] = pqB + (normalized - pqB) * blendFactor;
+                    lutGrey[i] = pqGrey + (normalized - pqGrey) * blendFactor;
                 }
             }
 
-            return lut;
+            return (lutR, lutG, lutB, lutGrey);
         }
     }
 }
