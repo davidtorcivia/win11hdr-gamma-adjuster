@@ -1,0 +1,21 @@
+# Visual Studio / C#
+.vs/
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build Output
+publish/
+publish-minimal/
+publish-small/
+
+# Logs
+startup_log.txt
+
+# OS Generated
+Thumbs.db
+Desktop.ini
+.DS_Store
