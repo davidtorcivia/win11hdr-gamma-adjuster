@@ -93,10 +93,14 @@ namespace HDRGammaController
         private void LoadMonitorProfile(MonitorInfo monitor)
         {
             // Load saved profile from settings (for compare feature)
-            _savedProfile = _settingsManager.GetMonitorProfile(monitor.MonitorDevicePath)?.Clone() 
-                           ?? new MonitorProfileData();
+            _savedProfile = _settingsManager.GetMonitorProfile(monitor.MonitorDevicePath)?.Clone();
+            if (_savedProfile == null)
+            {
+                // Default to monitor's current state
+                _savedProfile = new MonitorProfileData { GammaMode = monitor.CurrentGamma };
+            }
             
-            // Check pending changes first, then settings file
+            // Check pending changes first, then settings file, then monitor's current state
             if (!string.IsNullOrEmpty(monitor.MonitorDevicePath) && 
                 _pendingChanges.TryGetValue(monitor.MonitorDevicePath, out var pending))
             {
@@ -104,8 +108,16 @@ namespace HDRGammaController
             }
             else
             {
-                _currentProfile = _settingsManager.GetMonitorProfile(monitor.MonitorDevicePath) 
-                                  ?? new MonitorProfileData();
+                var saved = _settingsManager.GetMonitorProfile(monitor.MonitorDevicePath);
+                if (saved != null)
+                {
+                    _currentProfile = saved;
+                }
+                else
+                {
+                    // Use monitor's current gamma mode as default
+                    _currentProfile = new MonitorProfileData { GammaMode = monitor.CurrentGamma };
+                }
             }
             
             LoadSettingsUI();
