@@ -126,6 +126,7 @@
     <Grid>
         <tb:TaskbarIcon x:Name="MyNotifyIcon"
                         ToolTipText="HDR Gamma Controller"
+                        IconSource="/app.ico"
                         MenuActivation="RightClick">
             <tb:TaskbarIcon.ContextMenu>
                 <ContextMenu ItemsSource="{Binding TrayItems}" 

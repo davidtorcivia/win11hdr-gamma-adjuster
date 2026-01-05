@@ -84,37 +84,29 @@ namespace HDRGammaController.ViewModels
             var settingsWindow = new SettingsWindow(_model, allMonitors, _settingsManager, 
                 (monitor, mode, calibration) =>
                 {
-                    monitor.CurrentGamma = mode;
-                    _dispwinRunner.ApplyGamma(monitor, mode, monitor.SdrWhiteLevel, calibration);
+                    // Delegate to parent to ensure Night Mode is respected
+                    OnApplyWithCalibration?.Invoke(monitor, mode, calibration);
+                    
                     if (monitor.MonitorDevicePath == _model.MonitorDevicePath)
                     {
                         RebuildSubItems();
                     }
-                    OnProfileChanged?.Invoke(monitor, mode);
                 });
             settingsWindow.ShowDialog();
         }
 
         private void ApplyGamma(GammaMode mode)
         {
-             _model.CurrentGamma = mode;
-             // For now use dispwin logic 
-             // Ideally we run this on a background thread
              try
              {
-                Console.WriteLine($"MonitorViewModel.ApplyGamma: Applying {mode} to {_model.DeviceName}");
-                _dispwinRunner.ApplyGamma(_model, mode, _model.SdrWhiteLevel);
-                Console.WriteLine($"MonitorViewModel.ApplyGamma: Success");
+                // Delegate to parent to ensure Night Mode is respected
+                OnApplyWithCalibration?.Invoke(_model, mode, null);
                 
                 // Rebuild sub-items to update checkmarks
                 RebuildSubItems();
-                
-                // Notify parent for persistence
-                OnProfileChanged?.Invoke(_model, mode);
              }
              catch (Exception ex)
              {
-                 Console.WriteLine($"MonitorViewModel.ApplyGamma: Exception: {ex.GetType().Name}: {ex.Message}");
                  System.Windows.MessageBox.Show(
                      $"Failed to apply gamma:\n\n{ex.Message}",
                      "HDR Gamma Controller - Error",

@@ -158,85 +158,90 @@ namespace HDRGammaController.ViewModels
         
         private void ApplyProfile(MonitorInfo monitor, GammaMode mode)
         {
-            monitor.CurrentGamma = mode;
-            // Update saved config so it persists on next refresh
-            if (!string.IsNullOrEmpty(monitor.MonitorDevicePath))
-            {
-                 _savedConfigs[monitor.MonitorDevicePath] = monitor;
-                 _settingsManager.SetProfileForMonitor(monitor.MonitorDevicePath, mode);
-            }
-
-            try
-            {
-                _dispwinRunner.ApplyGamma(monitor, mode, monitor.SdrWhiteLevel);
-            }
-            catch {}
+            RequestApply(monitor, mode);
             
             // Refresh to update checkmarks
             RefreshMonitors();
         }
         
-        private void ApplyAll()
+        public void RequestApply(MonitorInfo monitor, GammaMode mode, CalibrationSettings? manualCalibration = null)
         {
-            var nightMode = _settingsManager.NightMode;
-            // Use service's blend factor which handles fading and scheduling
+             // Use service's blend factor
             double blend = _nightModeService.CurrentBlend;
-            
-            // Allow manual override
             if (_nightModeManuallyDisabled) blend = 0.0;
-            
             bool nightModeActive = blend > 0.001;
             
+            try 
+            { 
+                 // If manual calibration is provided (from live preview), use it.
+                 // Otherwise load from profile.
+                 CalibrationSettings calibration;
+                 double brightness = 100;
+                 
+                 if (manualCalibration != null)
+                 {
+                     calibration = manualCalibration;
+                     brightness = calibration.Brightness; // Approx
+                 }
+                 else
+                 {
+                    var profile = _settingsManager.GetMonitorProfile(monitor.MonitorDevicePath) ?? new MonitorProfileData();
+                    calibration = profile.ToCalibrationSettings();
+                    brightness = profile.Brightness;
+                 }
+
+                // Apply night mode temperature if active
+                if (nightModeActive)
+                {
+                    var nightMode = _settingsManager.NightMode;
+                    
+                    // Calculate night mode shift (-50 to +50 scale)
+                    double nightShift = (nightMode.TemperatureKelvin - 6500) / 70.0;
+                    
+                    // Blend the shift
+                    double blendedShift = nightShift * blend;
+                    
+                    // Combine with user's specific monitor calibration
+                    calibration.Temperature += blendedShift;
+                    calibration.Temperature = Math.Clamp(calibration.Temperature, -50.0, 50.0);
+                    
+                    if (blend > 0.5)
+                    {
+                        calibration.Algorithm = nightMode.Algorithm;
+                    }
+                }
+                
+                Console.WriteLine($"RequestApply: Applying {monitor.FriendlyName} - Gamma={mode}, Brightness={brightness}, Temp={calibration.Temperature:F1}");
+                _dispwinRunner.ApplyGamma(monitor, mode, monitor.SdrWhiteLevel, calibration); 
+                
+                // Update persistent state if this wasn't a manual preview
+                if (manualCalibration == null)
+                {
+                     monitor.CurrentGamma = mode;
+                     if (!string.IsNullOrEmpty(monitor.MonitorDevicePath))
+                     {
+                         _settingsManager.SetProfileForMonitor(monitor.MonitorDevicePath, mode);
+                     }
+                }
+            } catch (Exception ex) 
+            {
+                Console.WriteLine($"RequestApply error: {ex.Message}");
+            }
+        }
+
+        private void ApplyAll()
+        {
             foreach(var item in TrayItems)
             {
                 if (item is MonitorViewModel vm)
                 {
-                    try 
-                    { 
-                        // Get calibration settings from profile (or default)
-                        var profile = _settingsManager.GetMonitorProfile(vm.Model.MonitorDevicePath) ?? new MonitorProfileData();
-                        
-                        // Use saved gamma mode from profile
-                        var gammaMode = profile.GammaMode;
-                        if (gammaMode == GammaMode.WindowsDefault) continue; // Don't apply if Windows default
-                        
-                        // Update the model's current gamma to match saved profile
-                        vm.Model.CurrentGamma = gammaMode;
-                        
-                        var calibration = profile.ToCalibrationSettings();
-                        
-                        // Apply night mode temperature if active
-                        // We ADD the night mode temp to the base - assuming base is 0-based adjustment
-                        // But wait, NightMode.TemperatureKelvin is absolute (e.g. 2700K).
-                        // While calibration.Temperature is -50..+50 relative shift.
-                        
-                        if (nightModeActive)
-                        {
-                            // Calculate night mode shift (-50 to +50 scale)
-                            // 6500K = 0, 2700K ~= -54 (Limit is -50)
-                            // Formula: temp = (kelvin - 6500) / 70.0
-                            double nightShift = (nightMode.TemperatureKelvin - 6500) / 70.0;
-                            
-                            // Blend the shift
-                            double blendedShift = nightShift * blend;
-                            
-                            // Combine with user's specific monitor calibration
-                            // (e.g. if user set -5 for specific monitor, and night mode is -30, result is -35)
-                            calibration.Temperature += blendedShift;
-                            
-                            // Clamp
-                            calibration.Temperature = Math.Clamp(calibration.Temperature, -50.0, 50.0);
-                            
-                            // Use Night Mode algorithm if blending is significant
-                            if (blend > 0.5)
-                            {
-                                calibration.Algorithm = nightMode.Algorithm;
-                            }
-                        }
-                        
-                        Console.WriteLine($"ApplyAll: Applying {vm.Model.FriendlyName} - Gamma={gammaMode}, Brightness={profile.Brightness}, Temp={calibration.Temperature:F1}");
-                        _dispwinRunner.ApplyGamma(vm.Model, gammaMode, vm.Model.SdrWhiteLevel, calibration); 
-                    } catch {}
+                    // Get saved mode
+                    var profile = _settingsManager.GetMonitorProfile(vm.Model.MonitorDevicePath);
+                    var mode = profile?.GammaMode ?? vm.Model.CurrentGamma;
+                    
+                    if (mode == GammaMode.WindowsDefault) continue;
+                    
+                    RequestApply(vm.Model, mode);
                 }
             }
         }
@@ -305,7 +310,8 @@ namespace HDRGammaController.ViewModels
                     }
 
                     var vm = new MonitorViewModel(m, _profileManager, _dispwinRunner, index, _settingsManager);
-                    vm.OnProfileChanged = OnMonitorProfileChanged;
+                    // Point MonitorViewModel to use our centralized RequestApply which handles Night Mode
+                    vm.OnApplyWithCalibration = RequestApply;
                     vm.GetAllMonitors = () => monitors;
                     TrayItems.Add(vm);
                     index++;
