@@ -36,24 +36,49 @@ A Windows System Tray application to manage HDR Gamma settings on a per-monitor 
 
 ## Installation
 
-### Option 1: Pre-built Release (Recommended)
+### Option 1: Pre-built Releases (Recommended)
 
-1. Download the latest release
-2. Extract to your preferred location (e.g., `C:\Program Files\HDRGammaController`)
-3. Run `HDRGammaController.exe`
-4. Right-click the tray icon and enable "Start with Windows" for auto-start
+**Download the latest release from the Releases page.**
+
+There are two versions available:
+
+1.  **Full Version (`HDRGammaController_Full.zip`)**:
+    *   **Recommended for most users.**
+    *   **Self-Contained**: Does *not* require .NET Runtime to be installed.
+    *   **Bundled Dependencies**: Includes ArgyllCMS (`dispwin.exe`) so it works immediately offline.
+    *   **Size**: ~160 MB.
+
+2.  **Lite Version (`HDRGammaController_Lite.zip`)**:
+    *   **Requires**: [.NET 8.0 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/8.0).
+    *   **ArgyllCMS**: Will automatically download `dispwin.exe` on first launch (internet connection required).
+    *   **Size**: ~200 KB.
+
+**Instructions:**
+1.  Extract the ZIP file to your preferred location (e.g., `C:\Program Files\HDRGammaController`).
+2.  Run `HDRGammaController.exe`.
+3.  Right-click the tray icon and enable "Start with Windows" for auto-start.
 
 ### Option 2: Build from Source
 
+You can build the project manually or use the included packaging script.
+
+#### Using Packaging Script (Recommended)
+This script will generate both Lite and Full packages in the root directory.
+
+```powershell
+.\package.ps1
+```
+
+#### Manual Build
 ```powershell
 # Clone the repository
 git clone https://github.com/davidtorcivia/win11hdr-gamma-adjuster.git
 cd win11hdr-gamma-adjuster
 
-# Build minimal (requires .NET 8 runtime, ~1.4 MB)
+# Build minimal (requires .NET 8 runtime)
 dotnet publish src/HDRGammaController -c Release --self-contained false -o publish-minimal
 
-# OR build self-contained (no dependencies, ~155 MB)
+# OR build self-contained (no dependencies)
 dotnet publish src/HDRGammaController -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o publish
 ```
 
