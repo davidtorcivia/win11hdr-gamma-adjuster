@@ -274,8 +274,10 @@
                                 <Slider x:Name="BrightnessSlider" Style="{StaticResource ModernSlider}"
                                         Minimum="10" Maximum="100" Value="100" 
                                         ValueChanged="BrightnessSlider_ValueChanged"/>
-                                <TextBlock Text="Perceptual dimming preserves shadow detail" 
-                                           Foreground="{StaticResource TextDim}" FontSize="11"/>
+                                <CheckBox x:Name="EnhanceShadowsCheck" Content="Enhance shadow detail (Recommended)" 
+                                          ToolTip="When dimming, slightly lifts shadows to prevent them from becoming invisible (black crush)."
+                                          Style="{StaticResource ModernToggle}" Margin="0,8,0,0"
+                                          IsChecked="True" Checked="EnhanceShadows_Changed" Unchecked="EnhanceShadows_Changed"/>
                                 
                                 <!-- Quick Presets -->
                                 <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
@@ -388,6 +390,14 @@
                                         </Grid>
                                     </StackPanel>
                                     
+                                    <!-- Algorithm Selector -->
+                                    <TextBlock Text="Transformation Method" Style="{StaticResource FieldLabel}"/>
+                                    <ComboBox x:Name="NightAlgorithmCombo" Margin="0,0,0,12" SelectionChanged="NightAlgorithmCombo_Changed">
+                                        <ComboBoxItem Content="Standard (Recommended)" ToolTip="Tanner Helland's algorithm. Provides a pleasant, warm, photo-realistic tint." IsSelected="True"/>
+                                        <ComboBoxItem Content="Accurate (CIE 1931)" ToolTip="Physically accurate simulation of a black-body radiator. More scientifically precise."/>
+                                        <ComboBoxItem Content="Blue Light Filter" ToolTip="Focuses specifically on reducing blue light (460nm range) for potential sleep benefits. May look less 'natural'."/>
+                                    </ComboBox>
+
                                     <!-- Temperature in Kelvin -->
                                     <TextBlock Text="Night Temperature" Style="{StaticResource FieldLabel}"/>
                                     <Grid>

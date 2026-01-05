@@ -239,7 +239,7 @@ namespace HDRGammaController.Core
             }
 
             // 1. Generate per-channel LUTs
-            var (lutR, lutG, lutB, _) = LutGenerator.GenerateLut(mode, whiteLevel, calibration);
+            var (lutR, lutG, lutB, _) = LutGenerator.GenerateLut(mode, whiteLevel, calibration, monitor.IsHdrActive);
             Console.WriteLine($"DispwinRunner.ApplyGamma: Generated LUTs with {lutR.Length} entries");
 
             // 2. Create .cal file content

@@ -5,22 +5,30 @@ namespace HDRGammaController.Core
     /// <summary>
     /// Color adjustment functions for temperature, tint, dimming, and RGB corrections.
     /// </summary>
+    /// <summary>
+    /// Color adjustment functions for temperature, tint, dimming, and RGB corrections.
+    /// </summary>
     public static class ColorAdjustments
     {
         /// <summary>
-        /// Applies perceptually-accurate dimming that preserves black levels.
-        /// Uses power-law compression instead of linear multiply.
+        /// Applies dimming to value. Can use either linear scaling or perceptual (gamma-compressed) scaling.
         /// </summary>
         /// <param name="value">Input value (0-1)</param>
-        /// <param name="brightnessPercent">Brightness percentage (10-100)</param>
-        /// <returns>Dimmed value preserving shadow detail</returns>
-        public static double ApplyPerceptualDimming(double value, double brightnessPercent)
+        /// <param name="brightnessPercent">Brightness percentage (0-100)</param>
+        /// <param name="linear">If true, uses linear multiplication. If false, uses power-law compression to preserve shadows.</param>
+        /// <returns>Dimmed value</returns>
+        public static double ApplyDimming(double value, double brightnessPercent, bool linear = false)
         {
             if (brightnessPercent >= 100.0) return value;
             if (brightnessPercent <= 0) return 0;
             
-            // Clamp to valid range
-            double brightness = Math.Clamp(brightnessPercent, 10.0, 100.0) / 100.0;
+            // Clamp to valid range (0-100)
+            double brightness = Math.Clamp(brightnessPercent, 0.0, 100.0) / 100.0;
+            
+            if (linear)
+            {
+                return value * brightness;
+            }
             
             // Power-law compression: raises shadow detail while compressing highlights
             // This preserves near-black tones better than linear multiply
@@ -32,136 +40,154 @@ namespace HDRGammaController.Core
         }
         
         /// <summary>
-        /// Calculates RGB multipliers for a given color temperature shift.
-        /// Uses simplified Planckian locus approximation.
+        /// Calculates RGB multipliers for a given color temperature based on the selected algorithm.
         /// </summary>
-        /// <param name="temperature">Temperature shift (-50 to +50). Negative = warmer, Positive = cooler</param>
-        /// <returns>Tuple of (R, G, B) multipliers</returns>
-        public static (double R, double G, double B) GetTemperatureMultipliers(double temperature)
+        public static (double R, double G, double B) GetTemperatureMultipliers(double temperature, NightModeAlgorithm algorithm)
         {
             // Convert -50 to +50 scale to Kelvin: -50 = 2700K, 0 = 6500K, +50 = 10000K
             int kelvin = (int)(6500 + temperature * 70);
-            return GetKelvinMultipliers(kelvin);
+            kelvin = Math.Clamp(kelvin, 1000, 10000);
+
+            return algorithm switch
+            {
+                NightModeAlgorithm.AccurateCIE1931 => GetAccurateMultipliers(kelvin),
+                NightModeAlgorithm.BlueReduction => GetBlueReductionMultipliers(kelvin),
+                _ => GetStandardMultipliers(kelvin)
+            };
         }
         
         /// <summary>
-        /// Converts color temperature in Kelvin to RGB multipliers using Planckian locus.
-        /// Uses Tanner Helland's optimized approximation, accurate to less than 1% error.
-        /// Preserves luminance to maintain perceived brightness.
+        /// Standard approximation (Tanner Helland's algorithm).
+        /// Fast, pleasant, and widely used in photo editing.
         /// </summary>
-        /// <param name="kelvin">Color temperature in Kelvin (1000-40000, typical 1900-6500)</param>
-        /// <returns>Tuple of (R, G, B) multipliers normalized so max = 1.0</returns>
-        public static (double R, double G, double B) GetKelvinMultipliers(int kelvin)
+        public static (double R, double G, double B) GetStandardMultipliers(int kelvin)
         {
-            // Clamp to valid range
-            kelvin = Math.Clamp(kelvin, 1000, 40000);
-            double temp = kelvin / 100.0;
-            
-            double r, g, b;
-            
-            // Red calculation
-            if (temp <= 66)
-            {
-                r = 255;
-            }
-            else
-            {
-                r = 329.698727446 * Math.Pow(temp - 60, -0.1332047592);
-            }
-            
-            // Green calculation
-            if (temp <= 66)
-            {
-                g = 99.4708025861 * Math.Log(temp) - 161.1195681661;
-            }
-            else
-            {
-                g = 288.1221695283 * Math.Pow(temp - 60, -0.0755148492);
-            }
-            
-            // Blue calculation
-            if (temp >= 66)
-            {
-                b = 255;
-            }
-            else if (temp <= 19)
-            {
-                b = 0;
-            }
-            else
-            {
-                b = 138.5177312231 * Math.Log(temp - 10) - 305.0447927307;
-            }
-            
-            // Clamp to 0-255
-            r = Math.Clamp(r, 0, 255);
-            g = Math.Clamp(g, 0, 255);
-            b = Math.Clamp(b, 0, 255);
-            
-            // Normalize so that the maximum channel is 1.0
-            // This preserves relative ratios while avoiding clipping
-            double maxVal = Math.Max(r, Math.Max(g, b));
-            if (maxVal > 0)
-            {
-                r /= maxVal;
-                g /= maxVal;
-                b /= maxVal;
-            }
-            
             // Reference point: 6500K should return (1, 1, 1)
-            // At 6500K: temp=65, r≈255, g≈255, b≈255
-            // Calculate reference multipliers at 6500K
-            var ref6500 = GetRawKelvinRGB(6500);
+            var ref6500 = GetRawKelvinRGB_Helland(6500);
             double refMax = Math.Max(ref6500.r, Math.Max(ref6500.g, ref6500.b));
             
-            // Scale so 6500K = (1, 1, 1)
-            double refR = ref6500.r / refMax;
-            double refG = ref6500.g / refMax;
-            double refB = ref6500.b / refMax;
+            var target = GetRawKelvinRGB_Helland(kelvin);
             
-            // Apply as relative multipliers from 6500K reference
-            if (refR > 0) r /= refR;
-            if (refG > 0) g /= refG;
-            if (refB > 0) b /= refB;
+            // Normalize target
+            double maxVal = Math.Max(target.r, Math.Max(target.g, target.b));
+            if (maxVal > 0)
+            {
+                target.r /= maxVal;
+                target.g /= maxVal;
+                target.b /= maxVal;
+            }
             
-            // Clamp final values
-            r = Math.Clamp(r, 0.0, 1.5);
-            g = Math.Clamp(g, 0.0, 1.5);
-            b = Math.Clamp(b, 0.0, 1.5);
+            // Scale by reference
+            double r = refMax > 0 ? target.r / (ref6500.r / refMax) : target.r;
+            double g = refMax > 0 ? target.g / (ref6500.g / refMax) : target.g;
+            double b = refMax > 0 ? target.b / (ref6500.b / refMax) : target.b;
             
-            return (r, g, b);
+            return (Math.Clamp(r, 0, 1.5), Math.Clamp(g, 0, 1.5), Math.Clamp(b, 0, 1.5));
         }
-        
-        private static (double r, double g, double b) GetRawKelvinRGB(int kelvin)
+
+        private static (double r, double g, double b) GetRawKelvinRGB_Helland(int kelvin)
         {
             double temp = kelvin / 100.0;
             double r, g, b;
             
-            if (temp <= 66)
-                r = 255;
-            else
-                r = 329.698727446 * Math.Pow(temp - 60, -0.1332047592);
+            if (temp <= 66) r = 255;
+            else r = 329.698727446 * Math.Pow(temp - 60, -0.1332047592);
             
-            if (temp <= 66)
-                g = 99.4708025861 * Math.Log(temp) - 161.1195681661;
-            else
-                g = 288.1221695283 * Math.Pow(temp - 60, -0.0755148492);
+            if (temp <= 66) g = 99.4708025861 * Math.Log(temp) - 161.1195681661;
+            else g = 288.1221695283 * Math.Pow(temp - 60, -0.0755148492);
             
-            if (temp >= 66)
-                b = 255;
-            else if (temp <= 19)
-                b = 0;
-            else
-                b = 138.5177312231 * Math.Log(temp - 10) - 305.0447927307;
+            if (temp >= 66) b = 255;
+            else if (temp <= 19) b = 0;
+            else b = 138.5177312231 * Math.Log(temp - 10) - 305.0447927307;
             
             return (Math.Clamp(r, 0, 255), Math.Clamp(g, 0, 255), Math.Clamp(b, 0, 255));
         }
-        
+
+        /// <summary>
+        /// Physically accurate conversion using CIE 1931 color space (Kang et al. approximation).
+        /// Converts Kelvin -> xy Chromaticity -> XYZ -> sRGB.
+        /// </summary>
+        public static (double R, double G, double B) GetAccurateMultipliers(int kelvin)
+        {
+            double T = kelvin;
+            double x, y;
+
+            // Calculate x
+            if (T <= 4000)
+                x = -0.2661239 * Math.Pow(10, 9) / Math.Pow(T, 3) 
+                    - 0.2343580 * Math.Pow(10, 6) / Math.Pow(T, 2) 
+                    + 0.8776956 * Math.Pow(10, 3) / T + 0.179910;
+            else
+                x = -3.0258469 * Math.Pow(10, 9) / Math.Pow(T, 3) 
+                    + 2.1070379 * Math.Pow(10, 6) / Math.Pow(T, 2) 
+                    + 0.2226347 * Math.Pow(10, 3) / T + 0.240390;
+
+            // Calculate y
+            if (T <= 2222)
+                y = -1.1063814 * Math.Pow(x, 3) - 1.34811020 * Math.Pow(x, 2) + 2.18555032 * x - 0.20219683;
+            else if (T <= 4000)
+                y = -0.9549476 * Math.Pow(x, 3) - 1.37418593 * Math.Pow(x, 2) + 2.09137015 * x - 0.16748867;
+            else
+                y = 3.0817580 * Math.Pow(x, 3) - 5.87338670 * Math.Pow(x, 2) + 3.75112997 * x - 0.37001483;
+
+            // xyY to XYZ (Y=1 for max luminance)
+            double Y = 1.0;
+            double X = (y == 0) ? 0 : (x * Y) / y;
+            double Z = (y == 0) ? 0 : ((1 - x - y) * Y) / y;
+
+            // XYZ to Linear RGB (sRGB D65 Matrix)
+            double rL = 3.2406 * X - 1.5372 * Y - 0.4986 * Z;
+            double gL = -0.9689 * X + 1.8758 * Y + 0.0415 * Z;
+            double bL = 0.0557 * X - 0.2040 * Y + 1.0570 * Z;
+
+            // Clip Linear RGB
+            rL = Math.Clamp(rL, 0, 1);
+            gL = Math.Clamp(gL, 0, 1);
+            bL = Math.Clamp(bL, 0, 1);
+
+            // Gamma Correct (Linear -> sRGB)
+            // Using standard sRGB gamma approximation (power 1/2.2) or precise Transfer Function
+            // Simple power is usually sufficient for this context
+            double r = Math.Pow(rL, 1.0 / 2.2);
+            double g = Math.Pow(gL, 1.0 / 2.2);
+            double b = Math.Pow(bL, 1.0 / 2.2);
+
+            // Normalize to Max=1 to preserve brightness
+            double max = Math.Max(r, Math.Max(g, b));
+            if (max > 0) { r /= max; g /= max; b /= max; }
+
+            // Reference normalization to D65 (6500K)
+            // (Similar to standard, ensuring 6500K = 1,1,1 approximately)
+            // But since this IS D65-based XYZ-to-RGB, 6500K should naturally be close to white.
+            // We'll trust the output but normalize to ensure max brightness.
+
+            return (r, g, b);
+        }
+
+        /// <summary>
+        /// Simplistic filter that targets blue/green reduction linearly.
+        /// Preserves Red channel fully.
+        /// </summary>
+        public static (double R, double G, double B) GetBlueReductionMultipliers(int kelvin)
+        {
+            // Map Kelvin 6500 -> 1900 to Factor 0.0 -> 1.0
+            double factor = Math.Clamp((6500.0 - kelvin) / (6500.0 - 1900.0), 0.0, 1.0);
+            
+            // Linear reduction
+            // Blue: 1.0 -> 0.1 (Aggressive cut)
+            // Green: 1.0 -> 0.7 (Mild cut to warm up)
+            // Red: 1.0 (Preserve)
+            
+            double r = 1.0;
+            double g = 1.0 - (factor * 0.3);
+            double b = 1.0 - (factor * 0.9);
+            
+            return (r, g, b);
+        }
+
         /// <summary>
         /// Calculates RGB multipliers for tint adjustment (green/magenta axis).
         /// </summary>
-        /// <param name="tint">Tint shift (-50 to +50). Negative = green, Positive = magenta</param>
-        /// <returns>Tuple of (R, G, B) multipliers</returns>
         public static (double R, double G, double B) GetTintMultipliers(double tint)
         {
             if (Math.Abs(tint) < 0.01) return (1.0, 1.0, 1.0);
@@ -190,11 +216,6 @@ namespace HDRGammaController.Core
         /// <summary>
         /// Applies all calibration adjustments to an RGB triplet.
         /// </summary>
-        /// <param name="r">Red value (0-1)</param>
-        /// <param name="g">Green value (0-1)</param>
-        /// <param name="b">Blue value (0-1)</param>
-        /// <param name="settings">Calibration settings to apply</param>
-        /// <returns>Adjusted RGB values</returns>
         public static (double R, double G, double B) ApplyCalibration(
             double r, double g, double b, 
             CalibrationSettings settings)
@@ -202,18 +223,27 @@ namespace HDRGammaController.Core
             // 1. Apply perceptual dimming
             if (settings.Brightness < 100.0)
             {
-                r = ApplyPerceptualDimming(r, settings.Brightness);
-                g = ApplyPerceptualDimming(g, settings.Brightness);
-                b = ApplyPerceptualDimming(b, settings.Brightness);
+                r = ApplyDimming(r, settings.Brightness, settings.UseLinearBrightness);
+                g = ApplyDimming(g, settings.Brightness, settings.UseLinearBrightness);
+                b = ApplyDimming(b, settings.Brightness, settings.UseLinearBrightness);
             }
             
-            // 2. Apply temperature
-            if (Math.Abs(settings.Temperature) > 0.01)
+            // 2. Apply temperature (using selected algorithm)
+            if (Math.Abs(settings.Temperature) > 0.01 || settings.Algorithm != NightModeAlgorithm.Standard)
             {
-                var temp = GetTemperatureMultipliers(settings.Temperature);
-                r *= temp.R;
-                g *= temp.G;
-                b *= temp.B;
+                // Even if temperature is 0, if non-standard algorithm is selected, we might want to apply?
+                // Actually, if temp is 0 (6500K), all algorithms should return 1,1,1.
+                // So checking Abs(Temperature) > 0.01 is still a valid optimization.
+                // Except "BlueReduction" at 6500K is 1,1,1.
+                // So optimization holds.
+                 
+                if (Math.Abs(settings.Temperature) > 0.01)
+                {
+                    var temp = GetTemperatureMultipliers(settings.Temperature, settings.Algorithm);
+                    r *= temp.R;
+                    g *= temp.G;
+                    b *= temp.B;
+                }
             }
             
             // 3. Apply tint

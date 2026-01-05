@@ -161,6 +161,7 @@ namespace HDRGammaController
             // Brightness
             BrightnessSlider.Value = _currentProfile.Brightness;
             BrightnessValue.Text = $"{_currentProfile.Brightness:F0}%";
+            EnhanceShadowsCheck.IsChecked = !_currentProfile.UseLinearBrightness;
             
             // Temperature/Tint
             TemperatureSlider.Value = _currentProfile.Temperature;
@@ -181,10 +182,13 @@ namespace HDRGammaController
             Console.WriteLine($"LoadSettingsUI: NightMode loaded - Enabled={nightMode.Enabled}, UseAuto={nightMode.UseAutoSchedule}, Kelvin={nightMode.TemperatureKelvin}");
             NightModeEnabled.IsChecked = nightMode.Enabled;
             UseAutoSchedule.IsChecked = nightMode.UseAutoSchedule;
+            NightAlgorithmCombo.SelectedIndex = (int)nightMode.Algorithm;
+            
             if (nightMode.Latitude.HasValue)
                 LatitudeBox.Text = nightMode.Latitude.Value.ToString("F4");
             if (nightMode.Longitude.HasValue)
                 LongitudeBox.Text = nightMode.Longitude.Value.ToString("F4");
+                
             NightStartTime.Text = nightMode.StartTime.ToString(@"hh\:mm");
             NightEndTime.Text = nightMode.EndTime.ToString(@"hh\:mm");
             NightTempSlider.Value = nightMode.TemperatureKelvin;
@@ -282,6 +286,13 @@ namespace HDRGammaController
             ScheduleLivePreview();
         }
         
+        private void EnhanceShadows_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_isLoading) return;
+            _currentProfile.UseLinearBrightness = EnhanceShadowsCheck.IsChecked != true;
+            ScheduleLivePreview();
+        }
+        
         private void NightTempSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_isLoading || NightTempValue == null) return;
@@ -294,18 +305,27 @@ namespace HDRGammaController
             }
         }
         
+        private void NightAlgorithmCombo_Changed(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isLoading || NightModeEnabled == null) return; // NightModeEnabled might be null during init
+            if (NightModeEnabled.IsChecked == true)
+            {
+                PreviewNightTemperature((int)NightTempSlider.Value);
+            }
+        }
+        
         private void PreviewNightTemperature(int kelvin)
         {
             // Convert Kelvin to temperature shift for preview
             double tempShift = (kelvin - 6500) / 70.0;
+            var algorithm = (NightModeAlgorithm)NightAlgorithmCombo.SelectedIndex;
             
             foreach (var monitor in _monitors)
             {
-                if (!monitor.IsHdrActive) continue;
-                
                 var profile = _settingsManager.GetMonitorProfile(monitor.MonitorDevicePath);
                 var calibration = profile?.ToCalibrationSettings() ?? new CalibrationSettings();
                 calibration.Temperature = tempShift;
+                calibration.Algorithm = algorithm;
                 
                 _applyCallback?.Invoke(monitor, 
                     profile?.GammaMode ?? monitor.CurrentGamma, 
@@ -444,6 +464,7 @@ namespace HDRGammaController
         {
             _currentProfile.GammaMode = GetSelectedGammaMode();
             _currentProfile.Brightness = BrightnessSlider.Value;
+            _currentProfile.UseLinearBrightness = EnhanceShadowsCheck.IsChecked != true;
             _currentProfile.Temperature = TemperatureSlider.Value;
             _currentProfile.Tint = TintSlider.Value;
             _currentProfile.RedGain = RedGainSlider.Value;
@@ -474,7 +495,8 @@ namespace HDRGammaController
                 StartTime = TimeSpan.TryParse(NightStartTime.Text, out var start) ? start : new TimeSpan(21, 0, 0),
                 EndTime = TimeSpan.TryParse(NightEndTime.Text, out var end) ? end : new TimeSpan(7, 0, 0),
                 TemperatureKelvin = (int)NightTempSlider.Value,
-                FadeMinutes = (int)FadeSlider.Value
+                FadeMinutes = (int)FadeSlider.Value,
+                Algorithm = (NightModeAlgorithm)NightAlgorithmCombo.SelectedIndex
             };
             _settingsManager.SetNightMode(nightMode);
             

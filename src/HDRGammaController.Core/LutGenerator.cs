@@ -7,9 +7,9 @@ namespace HDRGammaController.Core
         /// <summary>
         /// Generates a 1024-point 1D LUT for HDR gamma correction (single channel, no calibration).
         /// </summary>
-        public static double[] GenerateLut(GammaMode gammaMode, double sdrWhiteLevel)
+        public static double[] GenerateLut(GammaMode gammaMode, double sdrWhiteLevel, bool isHdr = true)
         {
-            return GenerateLut(gammaMode, sdrWhiteLevel, CalibrationSettings.Default).Grey;
+            return GenerateLut(gammaMode, sdrWhiteLevel, CalibrationSettings.Default, isHdr).Grey;
         }
         
         /// <summary>
@@ -22,7 +22,8 @@ namespace HDRGammaController.Core
         public static (double[] R, double[] G, double[] B, double[] Grey) GenerateLut(
             GammaMode gammaMode, 
             double sdrWhiteLevel, 
-            CalibrationSettings calibration)
+            CalibrationSettings calibration,
+            bool isHdr = true)
         {
             double[] lutR = new double[1024];
             double[] lutG = new double[1024];
@@ -39,6 +40,30 @@ namespace HDRGammaController.Core
                     lutG[i] = val;
                     lutB[i] = val;
                     lutGrey[i] = val;
+                }
+                return (lutR, lutG, lutB, lutGrey);
+            }
+
+            if (!isHdr)
+            {
+                // SDR Generation logic: Gamma 2.2 Decode -> Calibrate -> Gamma 2.2 Encode
+                // This ensures linear operations (like tint/temp) are perceptually uniform
+                for (int i = 0; i < 1024; i++)
+                {
+                    double input = i / 1023.0;
+                    
+                    // 1. Decode generic Gamma 2.2 (Standard Windows SDR)
+                    // We assume the signal is sRGB/Gamma 2.2
+                    double linear = Math.Pow(input, 2.2);
+                    
+                    // 2. Apply Calibration
+                    var (r, g, b) = ColorAdjustments.ApplyCalibration(linear, linear, linear, calibration);
+                    
+                    // 3. Encode back to Gamma 2.2
+                    lutR[i] = Math.Pow(r, 1.0 / 2.2);
+                    lutG[i] = Math.Pow(g, 1.0 / 2.2);
+                    lutB[i] = Math.Pow(b, 1.0 / 2.2);
+                    lutGrey[i] = (lutR[i] + lutG[i] + lutB[i]) / 3.0;
                 }
                 return (lutR, lutG, lutB, lutGrey);
             }

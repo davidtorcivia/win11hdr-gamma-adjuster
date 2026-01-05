@@ -53,6 +53,19 @@ namespace HDRGammaController.Core
         public double BlueOffset { get; set; } = 0.0;
         
         /// <summary>
+        /// Algorithm to use for temperature adjustment.
+        /// </summary>
+        /// <summary>
+        /// Algorithm to use for temperature adjustment.
+        /// </summary>
+        public NightModeAlgorithm Algorithm { get; set; } = NightModeAlgorithm.Standard;
+
+        /// <summary>
+        /// If true, uses standard linear dimming instead of perceptual (gamma-lift) dimming.
+        /// </summary>
+        public bool UseLinearBrightness { get; set; } = false;
+
+        /// <summary>
         /// Returns true if any adjustments are applied (non-default values).
         /// </summary>
         public bool HasAdjustments =>
@@ -77,6 +90,7 @@ namespace HDRGammaController.Core
         public CalibrationSettings Clone() => new CalibrationSettings
         {
             Brightness = this.Brightness,
+            UseLinearBrightness = this.UseLinearBrightness,
             Temperature = this.Temperature,
             Tint = this.Tint,
             RedGain = this.RedGain,
@@ -84,7 +98,8 @@ namespace HDRGammaController.Core
             BlueGain = this.BlueGain,
             RedOffset = this.RedOffset,
             GreenOffset = this.GreenOffset,
-            BlueOffset = this.BlueOffset
+            BlueOffset = this.BlueOffset,
+            Algorithm = this.Algorithm
         };
     }
 }

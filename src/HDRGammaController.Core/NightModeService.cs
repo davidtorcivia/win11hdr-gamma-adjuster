@@ -45,6 +45,11 @@ namespace HDRGammaController.Core
         public int TemperatureKelvin { get; set; } = 2700;
         
         /// <summary>
+        /// Algorithm to use for color temperature transformation.
+        /// </summary>
+        public NightModeAlgorithm Algorithm { get; set; } = NightModeAlgorithm.Standard;
+        
+        /// <summary>
         /// Legacy temperature as -50 to +50 scale. Converts to Kelvin internally.
         /// </summary>
         public double Temperature
@@ -152,6 +157,9 @@ namespace HDRGammaController.Core
             // Blend in night mode temperature
             result.Temperature += _settings.Temperature * _currentBlend;
             result.Temperature = Math.Clamp(result.Temperature, -50.0, 50.0);
+            
+            // Apply night mode algorithm
+            result.Algorithm = _settings.Algorithm;
             
             return result;
         }
@@ -270,7 +278,8 @@ namespace HDRGammaController.Core
         {
             var calibration = new CalibrationSettings
             {
-                Temperature = _settings.Temperature * _currentBlend
+                Temperature = _settings.Temperature * _currentBlend,
+                Algorithm = _settings.Algorithm
             };
             ApplyAdjustments?.Invoke(calibration);
         }

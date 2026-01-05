@@ -13,6 +13,7 @@ namespace HDRGammaController.Core
     {
         public GammaMode GammaMode { get; set; } = GammaMode.Gamma22;
         public double Brightness { get; set; } = 100.0;
+        public bool UseLinearBrightness { get; set; } = false;
         public double Temperature { get; set; } = 0.0;
         public double Tint { get; set; } = 0.0;
         public double RedGain { get; set; } = 1.0;
@@ -25,6 +26,7 @@ namespace HDRGammaController.Core
         public CalibrationSettings ToCalibrationSettings() => new CalibrationSettings
         {
             Brightness = Brightness,
+            UseLinearBrightness = UseLinearBrightness,
             Temperature = Temperature,
             Tint = Tint,
             RedGain = RedGain,
@@ -39,6 +41,7 @@ namespace HDRGammaController.Core
         {
             GammaMode = mode,
             Brightness = settings.Brightness,
+            UseLinearBrightness = settings.UseLinearBrightness,
             Temperature = settings.Temperature,
             Tint = settings.Tint,
             RedGain = settings.RedGain,
@@ -53,6 +56,7 @@ namespace HDRGammaController.Core
         {
             GammaMode = GammaMode,
             Brightness = Brightness,
+            UseLinearBrightness = UseLinearBrightness,
             Temperature = Temperature,
             Tint = Tint,
             RedGain = RedGain,
@@ -77,6 +81,7 @@ namespace HDRGammaController.Core
         public string EndTime { get; set; } = "07:00";
         public int TemperatureKelvin { get; set; } = 2700;
         public int FadeMinutes { get; set; } = 30;
+        public NightModeAlgorithm Algorithm { get; set; } = NightModeAlgorithm.Standard;
         
         public NightModeSettings ToNightModeSettings() => new NightModeSettings
         {
@@ -87,7 +92,8 @@ namespace HDRGammaController.Core
             StartTime = TimeSpan.TryParse(StartTime, out var start) ? start : new TimeSpan(21, 0, 0),
             EndTime = TimeSpan.TryParse(EndTime, out var end) ? end : new TimeSpan(7, 0, 0),
             TemperatureKelvin = TemperatureKelvin,
-            FadeMinutes = FadeMinutes
+            FadeMinutes = FadeMinutes,
+            Algorithm = Algorithm
         };
         
         public static NightModeSettingsData FromNightModeSettings(NightModeSettings settings) => new NightModeSettingsData
@@ -99,7 +105,8 @@ namespace HDRGammaController.Core
             StartTime = settings.StartTime.ToString(@"hh\:mm"),
             EndTime = settings.EndTime.ToString(@"hh\:mm"),
             TemperatureKelvin = settings.TemperatureKelvin,
-            FadeMinutes = settings.FadeMinutes
+            FadeMinutes = settings.FadeMinutes,
+            Algorithm = settings.Algorithm
         };
     }
     

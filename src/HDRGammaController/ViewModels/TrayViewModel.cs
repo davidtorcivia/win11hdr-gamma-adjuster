@@ -168,13 +168,12 @@ namespace HDRGammaController.ViewModels
             
             foreach(var item in TrayItems)
             {
-                if (item is MonitorViewModel vm && vm.Model.IsHdrActive)
+                if (item is MonitorViewModel vm)
                 {
                     try 
                     { 
-                        // Get calibration settings from profile
-                        var profile = _settingsManager.GetMonitorProfile(vm.Model.MonitorDevicePath);
-                        if (profile == null) continue; // No saved profile, skip
+                        // Get calibration settings from profile (or default)
+                        var profile = _settingsManager.GetMonitorProfile(vm.Model.MonitorDevicePath) ?? new MonitorProfileData();
                         
                         // Use saved gamma mode from profile
                         var gammaMode = profile.GammaMode;
@@ -190,6 +189,7 @@ namespace HDRGammaController.ViewModels
                         {
                             // Convert Kelvin to temperature shift
                             calibration.Temperature = (nightMode.TemperatureKelvin - 6500) / 70.0;
+                            calibration.Algorithm = nightMode.Algorithm;
                         }
                         
                         Console.WriteLine($"ApplyAll: Applying {vm.Model.FriendlyName} - Gamma={gammaMode}, Brightness={profile.Brightness}");
