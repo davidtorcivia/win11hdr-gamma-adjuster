@@ -86,18 +86,26 @@ namespace HDRGammaController
             UpdateProfileFromUI();
             if (!string.IsNullOrEmpty(_currentMonitor.MonitorDevicePath))
             {
-                _pendingChanges[_currentMonitor.MonitorDevicePath] = _currentProfile;
+                // Clone to avoid reference issues
+                _pendingChanges[_currentMonitor.MonitorDevicePath] = _currentProfile.Clone();
             }
         }
         
         private void LoadMonitorProfile(MonitorInfo monitor)
         {
+            Console.WriteLine($"LoadMonitorProfile: Loading for {monitor.MonitorDevicePath?.Substring(0, Math.Min(30, monitor.MonitorDevicePath?.Length ?? 0))}...");
+            
             // Load saved profile from settings (for compare feature)
             _savedProfile = _settingsManager.GetMonitorProfile(monitor.MonitorDevicePath)?.Clone();
             if (_savedProfile == null)
             {
+                Console.WriteLine($"LoadMonitorProfile: No saved profile found, using defaults");
                 // Default to monitor's current state
                 _savedProfile = new MonitorProfileData { GammaMode = monitor.CurrentGamma };
+            }
+            else
+            {
+                Console.WriteLine($"LoadMonitorProfile: Saved profile found - Brightness={_savedProfile.Brightness}");
             }
             
             // Check pending changes first, then settings file, then monitor's current state
@@ -105,6 +113,7 @@ namespace HDRGammaController
                 _pendingChanges.TryGetValue(monitor.MonitorDevicePath, out var pending))
             {
                 _currentProfile = pending;
+                Console.WriteLine($"LoadMonitorProfile: Using pending changes - Brightness={pending.Brightness}");
             }
             else
             {
@@ -112,9 +121,11 @@ namespace HDRGammaController
                 if (saved != null)
                 {
                     _currentProfile = saved;
+                    Console.WriteLine($"LoadMonitorProfile: Using saved profile - Brightness={saved.Brightness}");
                 }
                 else
                 {
+                    Console.WriteLine($"LoadMonitorProfile: No saved, using defaults");
                     // Use monitor's current gamma mode as default
                     _currentProfile = new MonitorProfileData { GammaMode = monitor.CurrentGamma };
                 }
@@ -167,21 +178,60 @@ namespace HDRGammaController
             
             // Night Mode (global, not per-monitor)
             var nightMode = _settingsManager.NightMode;
+            Console.WriteLine($"LoadSettingsUI: NightMode loaded - Enabled={nightMode.Enabled}, UseAuto={nightMode.UseAutoSchedule}, Kelvin={nightMode.TemperatureKelvin}");
             NightModeEnabled.IsChecked = nightMode.Enabled;
+            UseAutoSchedule.IsChecked = nightMode.UseAutoSchedule;
+            if (nightMode.Latitude.HasValue)
+                LatitudeBox.Text = nightMode.Latitude.Value.ToString("F4");
+            if (nightMode.Longitude.HasValue)
+                LongitudeBox.Text = nightMode.Longitude.Value.ToString("F4");
             NightStartTime.Text = nightMode.StartTime.ToString(@"hh\:mm");
             NightEndTime.Text = nightMode.EndTime.ToString(@"hh\:mm");
-            NightTempSlider.Value = nightMode.Temperature;
-            NightTempValue.Text = $"{nightMode.Temperature:F0}";
+            NightTempSlider.Value = nightMode.TemperatureKelvin;
+            NightTempValue.Text = $"{nightMode.TemperatureKelvin}K";
             FadeSlider.Value = nightMode.FadeMinutes;
             FadeValue.Text = $"{nightMode.FadeMinutes}";
             
             UpdateNightModeOptionsVisibility();
+            UpdateSunTimesDisplay();
         }
         
         private void UpdateNightModeOptionsVisibility()
         {
+            if (NightModeOptions == null) return;
             NightModeOptions.Opacity = NightModeEnabled.IsChecked == true ? 1.0 : 0.4;
             NightModeOptions.IsEnabled = NightModeEnabled.IsChecked == true;
+            
+            // Show/hide location vs manual time panels
+            if (LocationPanel != null && ManualTimesPanel != null)
+            {
+                bool autoMode = UseAutoSchedule?.IsChecked == true;
+                LocationPanel.Visibility = autoMode ? Visibility.Visible : Visibility.Collapsed;
+                ManualTimesPanel.Visibility = autoMode ? Visibility.Collapsed : Visibility.Visible;
+            }
+        }
+        
+        private void UpdateSunTimesDisplay()
+        {
+            if (SunTimesDisplay == null) return;
+            
+            if (double.TryParse(LatitudeBox?.Text, out double lat) && 
+                double.TryParse(LongitudeBox?.Text, out double lon))
+            {
+                try
+                {
+                    var (sunrise, sunset) = Core.SunCalculator.CalculateToday(lat, lon);
+                    SunTimesDisplay.Text = $"Sunrise: {sunrise:hh\\:mm}, Sunset: {sunset:hh\\:mm}";
+                }
+                catch
+                {
+                    SunTimesDisplay.Text = "Invalid coordinates";
+                }
+            }
+            else
+            {
+                SunTimesDisplay.Text = "";
+            }
         }
         
         private void ScheduleLivePreview()
@@ -235,7 +285,64 @@ namespace HDRGammaController
         private void NightTempSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_isLoading || NightTempValue == null) return;
-            NightTempValue.Text = $"{e.NewValue:F0}";
+            NightTempValue.Text = $"{(int)e.NewValue}K";
+            
+            // Live preview - apply night temperature to all monitors
+            if (NightModeEnabled.IsChecked == true)
+            {
+                PreviewNightTemperature((int)e.NewValue);
+            }
+        }
+        
+        private void PreviewNightTemperature(int kelvin)
+        {
+            // Convert Kelvin to temperature shift for preview
+            double tempShift = (kelvin - 6500) / 70.0;
+            
+            foreach (var monitor in _monitors)
+            {
+                if (!monitor.IsHdrActive) continue;
+                
+                var profile = _settingsManager.GetMonitorProfile(monitor.MonitorDevicePath);
+                var calibration = profile?.ToCalibrationSettings() ?? new CalibrationSettings();
+                calibration.Temperature = tempShift;
+                
+                _applyCallback?.Invoke(monitor, 
+                    profile?.GammaMode ?? monitor.CurrentGamma, 
+                    calibration);
+            }
+        }
+        
+        private void UseAutoSchedule_Changed(object sender, RoutedEventArgs e)
+        {
+            UpdateNightModeOptionsVisibility();
+            UpdateSunTimesDisplay();
+        }
+        
+        private async void DetectLocation_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                // Try IP-based geolocation as a simple fallback
+                using var client = new System.Net.Http.HttpClient();
+                client.Timeout = TimeSpan.FromSeconds(5);
+                var response = await client.GetStringAsync("http://ip-api.com/json/?fields=lat,lon");
+                
+                // Parse simple JSON response
+                var latMatch = System.Text.RegularExpressions.Regex.Match(response, "\"lat\":([\\d.-]+)");
+                var lonMatch = System.Text.RegularExpressions.Regex.Match(response, "\"lon\":([\\d.-]+)");
+                
+                if (latMatch.Success && lonMatch.Success)
+                {
+                    LatitudeBox.Text = latMatch.Groups[1].Value;
+                    LongitudeBox.Text = lonMatch.Groups[1].Value;
+                    UpdateSunTimesDisplay();
+                }
+            }
+            catch
+            {
+                SunTimesDisplay.Text = "Location detection failed";
+            }
         }
         
         private void FadeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -342,6 +449,8 @@ namespace HDRGammaController
             _currentProfile.RedGain = RedGainSlider.Value;
             _currentProfile.GreenGain = GreenGainSlider.Value;
             _currentProfile.BlueGain = BlueGainSlider.Value;
+            
+            Console.WriteLine($"UpdateProfileFromUI: Brightness={_currentProfile.Brightness}, Temp={_currentProfile.Temperature}, Tint={_currentProfile.Tint}");
         }
         
         private void SaveAndClose_Click(object sender, RoutedEventArgs e)
@@ -359,9 +468,12 @@ namespace HDRGammaController
             var nightMode = new NightModeSettings
             {
                 Enabled = NightModeEnabled.IsChecked == true,
+                UseAutoSchedule = UseAutoSchedule.IsChecked == true,
+                Latitude = double.TryParse(LatitudeBox.Text, out var lat) ? lat : null,
+                Longitude = double.TryParse(LongitudeBox.Text, out var lon) ? lon : null,
                 StartTime = TimeSpan.TryParse(NightStartTime.Text, out var start) ? start : new TimeSpan(21, 0, 0),
                 EndTime = TimeSpan.TryParse(NightEndTime.Text, out var end) ? end : new TimeSpan(7, 0, 0),
-                Temperature = NightTempSlider.Value,
+                TemperatureKelvin = (int)NightTempSlider.Value,
                 FadeMinutes = (int)FadeSlider.Value
             };
             _settingsManager.SetNightMode(nightMode);

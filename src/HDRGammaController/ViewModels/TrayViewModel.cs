@@ -22,6 +22,8 @@ namespace HDRGammaController.ViewModels
         
         private readonly Dictionary<int, Action<MonitorInfo>> _hotkeyActions = new Dictionary<int, Action<MonitorInfo>>();
         private int _panicId = -1;
+        private int _nightModeToggleId = -1;
+        private bool _nightModeManuallyDisabled = false;
 
         private Dictionary<string, MonitorInfo> _savedConfigs = new Dictionary<string, MonitorInfo>();
 
@@ -75,6 +77,9 @@ namespace HDRGammaController.ViewModels
             
             // Panic: Win+Shift+F4
             _panicId = _hotkeyManager.Register(Key.F4, ModifierKeys.Windows | ModifierKeys.Shift);
+            
+            // Night Mode Toggle: Win+Shift+N
+            _nightModeToggleId = _hotkeyManager.Register(Key.N, ModifierKeys.Windows | ModifierKeys.Shift);
         }
 
         private void OnHotkeyPressed(int id)
@@ -82,6 +87,14 @@ namespace HDRGammaController.ViewModels
             if (id == _panicId)
             {
                 PanicAll();
+                return;
+            }
+            
+            if (id == _nightModeToggleId)
+            {
+                // Toggle night mode on/off
+                _nightModeManuallyDisabled = !_nightModeManuallyDisabled;
+                ApplyAll(); // Re-apply all calibrations with night mode toggled
                 return;
             }
 
@@ -148,15 +161,57 @@ namespace HDRGammaController.ViewModels
         
         private void ApplyAll()
         {
+            var nightMode = _settingsManager.NightMode;
+            bool nightModeActive = !_nightModeManuallyDisabled && 
+                                   nightMode.Enabled && 
+                                   IsNightModeTimeActive(nightMode);
+            
             foreach(var item in TrayItems)
             {
-                if (item is MonitorViewModel vm && vm.Model.IsHdrActive && vm.Model.CurrentGamma != GammaMode.WindowsDefault)
+                if (item is MonitorViewModel vm && vm.Model.IsHdrActive)
                 {
-                     try 
-                     { 
-                        _dispwinRunner.ApplyGamma(vm.Model, vm.Model.CurrentGamma, vm.Model.SdrWhiteLevel); 
-                     } catch {}
+                    try 
+                    { 
+                        // Get calibration settings from profile
+                        var profile = _settingsManager.GetMonitorProfile(vm.Model.MonitorDevicePath);
+                        if (profile == null) continue; // No saved profile, skip
+                        
+                        // Use saved gamma mode from profile
+                        var gammaMode = profile.GammaMode;
+                        if (gammaMode == GammaMode.WindowsDefault) continue; // Don't apply if Windows default
+                        
+                        // Update the model's current gamma to match saved profile
+                        vm.Model.CurrentGamma = gammaMode;
+                        
+                        var calibration = profile.ToCalibrationSettings();
+                        
+                        // Apply night mode temperature if active
+                        if (nightModeActive)
+                        {
+                            // Convert Kelvin to temperature shift
+                            calibration.Temperature = (nightMode.TemperatureKelvin - 6500) / 70.0;
+                        }
+                        
+                        Console.WriteLine($"ApplyAll: Applying {vm.Model.FriendlyName} - Gamma={gammaMode}, Brightness={profile.Brightness}");
+                        _dispwinRunner.ApplyGamma(vm.Model, gammaMode, vm.Model.SdrWhiteLevel, calibration); 
+                    } catch {}
                 }
+            }
+        }
+        
+        private bool IsNightModeTimeActive(NightModeSettings settings)
+        {
+            var (startTime, endTime) = settings.GetEffectiveTimes();
+            var now = DateTime.Now.TimeOfDay;
+            
+            // Handle overnight periods (e.g., sunset 17:00 to sunrise 07:00)
+            if (startTime > endTime)
+            {
+                return now >= startTime || now <= endTime;
+            }
+            else
+            {
+                return now >= startTime && now <= endTime;
             }
         }
 

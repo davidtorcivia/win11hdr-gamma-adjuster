@@ -14,24 +14,63 @@ namespace HDRGammaController.Core
         public bool Enabled { get; set; } = false;
         
         /// <summary>
-        /// Start time for night mode (e.g., "21:00").
+        /// Use automatic sunrise/sunset calculation based on location.
+        /// </summary>
+        public bool UseAutoSchedule { get; set; } = false;
+        
+        /// <summary>
+        /// Latitude for sunrise/sunset calculation (-90 to 90).
+        /// </summary>
+        public double? Latitude { get; set; } = null;
+        
+        /// <summary>
+        /// Longitude for sunrise/sunset calculation (-180 to 180).
+        /// </summary>
+        public double? Longitude { get; set; } = null;
+        
+        /// <summary>
+        /// Start time for night mode (e.g., "21:00"). Used when UseAutoSchedule is false.
         /// </summary>
         public TimeSpan StartTime { get; set; } = new TimeSpan(21, 0, 0);
         
         /// <summary>
-        /// End time for night mode (e.g., "07:00").
+        /// End time for night mode (e.g., "07:00"). Used when UseAutoSchedule is false.
         /// </summary>
         public TimeSpan EndTime { get; set; } = new TimeSpan(7, 0, 0);
         
         /// <summary>
-        /// Temperature shift during night mode (-50 to 0, negative = warmer).
+        /// Color temperature in Kelvin during night mode (1900-6500K, lower = warmer).
+        /// Default 2700K matches warm incandescent lighting.
         /// </summary>
-        public double Temperature { get; set; } = -30.0;
+        public int TemperatureKelvin { get; set; } = 2700;
+        
+        /// <summary>
+        /// Legacy temperature as -50 to +50 scale. Converts to Kelvin internally.
+        /// </summary>
+        public double Temperature
+        {
+            get => (TemperatureKelvin - 6500) / 70.0;
+            set => TemperatureKelvin = (int)(6500 + value * 70);
+        }
         
         /// <summary>
         /// Fade duration in minutes (0 = instant, 60 = gradual).
         /// </summary>
         public int FadeMinutes { get; set; } = 30;
+        
+        /// <summary>
+        /// Gets effective start/end times, using sunrise/sunset if auto mode enabled.
+        /// </summary>
+        public (TimeSpan start, TimeSpan end) GetEffectiveTimes()
+        {
+            if (UseAutoSchedule && Latitude.HasValue && Longitude.HasValue)
+            {
+                var (sunrise, sunset) = SunCalculator.CalculateToday(Latitude.Value, Longitude.Value);
+                // Night mode starts at sunset, ends at sunrise
+                return (sunset, sunrise);
+            }
+            return (StartTime, EndTime);
+        }
     }
     
     /// <summary>
@@ -155,35 +194,39 @@ namespace HDRGammaController.Core
         
         private bool IsInNightPeriod(TimeSpan now)
         {
-            // Handle overnight periods (e.g., 21:00 to 07:00)
-            if (_settings.StartTime > _settings.EndTime)
+            // Get effective times (handles auto sunrise/sunset mode)
+            var (startTime, endTime) = _settings.GetEffectiveTimes();
+            
+            // Handle overnight periods (e.g., sunset 17:00 to sunrise 07:00)
+            if (startTime > endTime)
             {
                 // Night period spans midnight
-                return now >= _settings.StartTime || now <= _settings.EndTime;
+                return now >= startTime || now <= endTime;
             }
             else
             {
                 // Normal period within same day
-                return now >= _settings.StartTime && now <= _settings.EndTime;
+                return now >= startTime && now <= endTime;
             }
         }
         
         private double CalculateFadeBlend(TimeSpan now)
         {
+            var (startTime, endTime) = _settings.GetEffectiveTimes();
             var fadeDuration = TimeSpan.FromMinutes(_settings.FadeMinutes);
             
             // Fade in: StartTime - fadeMinutes to StartTime
-            var fadeInStart = _settings.StartTime - fadeDuration;
+            var fadeInStart = startTime - fadeDuration;
             if (fadeInStart < TimeSpan.Zero) fadeInStart += TimeSpan.FromHours(24);
             
             // Fade out: EndTime to EndTime + fadeMinutes
-            var fadeOutEnd = _settings.EndTime + fadeDuration;
+            var fadeOutEnd = endTime + fadeDuration;
             if (fadeOutEnd > TimeSpan.FromHours(24)) fadeOutEnd -= TimeSpan.FromHours(24);
             
             // Check if we're in fade-in period
-            if (IsInFadeRange(now, fadeInStart, _settings.StartTime))
+            if (IsInFadeRange(now, fadeInStart, startTime))
             {
-                double progress = GetFadeProgress(now, fadeInStart, _settings.StartTime);
+                double progress = GetFadeProgress(now, fadeInStart, startTime);
                 return progress;
             }
             
@@ -194,9 +237,9 @@ namespace HDRGammaController.Core
             }
             
             // Check if we're in fade-out period
-            if (IsInFadeRange(now, _settings.EndTime, fadeOutEnd))
+            if (IsInFadeRange(now, endTime, fadeOutEnd))
             {
-                double progress = GetFadeProgress(now, _settings.EndTime, fadeOutEnd);
+                double progress = GetFadeProgress(now, endTime, fadeOutEnd);
                 return 1.0 - progress;
             }
             

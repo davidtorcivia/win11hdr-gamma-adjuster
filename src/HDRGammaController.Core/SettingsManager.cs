@@ -70,34 +70,44 @@ namespace HDRGammaController.Core
     public class NightModeSettingsData
     {
         public bool Enabled { get; set; } = false;
+        public bool UseAutoSchedule { get; set; } = false;
+        public double? Latitude { get; set; } = null;
+        public double? Longitude { get; set; } = null;
         public string StartTime { get; set; } = "21:00";
         public string EndTime { get; set; } = "07:00";
-        public double Temperature { get; set; } = -30.0;
+        public int TemperatureKelvin { get; set; } = 2700;
         public int FadeMinutes { get; set; } = 30;
         
         public NightModeSettings ToNightModeSettings() => new NightModeSettings
         {
             Enabled = Enabled,
+            UseAutoSchedule = UseAutoSchedule,
+            Latitude = Latitude,
+            Longitude = Longitude,
             StartTime = TimeSpan.TryParse(StartTime, out var start) ? start : new TimeSpan(21, 0, 0),
             EndTime = TimeSpan.TryParse(EndTime, out var end) ? end : new TimeSpan(7, 0, 0),
-            Temperature = Temperature,
+            TemperatureKelvin = TemperatureKelvin,
             FadeMinutes = FadeMinutes
         };
         
         public static NightModeSettingsData FromNightModeSettings(NightModeSettings settings) => new NightModeSettingsData
         {
             Enabled = settings.Enabled,
+            UseAutoSchedule = settings.UseAutoSchedule,
+            Latitude = settings.Latitude,
+            Longitude = settings.Longitude,
             StartTime = settings.StartTime.ToString(@"hh\:mm"),
             EndTime = settings.EndTime.ToString(@"hh\:mm"),
-            Temperature = settings.Temperature,
+            TemperatureKelvin = settings.TemperatureKelvin,
             FadeMinutes = settings.FadeMinutes
         };
     }
     
     public class SettingsManager
     {
+        // Use LocalApplicationData to avoid Resilio Sync corruption
         private static readonly string AppDataPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "HDRGammaController");
         
         private static readonly string SettingsFilePath = Path.Combine(AppDataPath, "settings.json");
@@ -118,7 +128,11 @@ namespace HDRGammaController.Core
                 if (File.Exists(SettingsFilePath))
                 {
                     string json = File.ReadAllText(SettingsFilePath);
-                    _data = JsonSerializer.Deserialize<SettingsData>(json) ?? new SettingsData();
+                    var options = new JsonSerializerOptions 
+                    { 
+                        Converters = { new JsonStringEnumConverter() }
+                    };
+                    _data = JsonSerializer.Deserialize<SettingsData>(json, options) ?? new SettingsData();
                     Console.WriteLine($"SettingsManager: Loaded {_data.MonitorProfiles.Count} monitor profiles.");
                 }
             }
@@ -140,6 +154,7 @@ namespace HDRGammaController.Core
                     Converters = { new JsonStringEnumConverter() }
                 };
                 string json = JsonSerializer.Serialize(_data, options);
+                Console.WriteLine($"SettingsManager.Save: JSON preview (first 500 chars):\n{json.Substring(0, Math.Min(500, json.Length))}");
                 File.WriteAllText(SettingsFilePath, json);
                 Console.WriteLine($"SettingsManager: Saved {_data.MonitorProfiles.Count} monitor profiles.");
             }
@@ -183,6 +198,12 @@ namespace HDRGammaController.Core
         public void SetMonitorProfile(string monitorDevicePath, MonitorProfileData profile)
         {
             if (string.IsNullOrEmpty(monitorDevicePath)) return;
+            if (profile == null)
+            {
+                Console.WriteLine($"SettingsManager.SetMonitorProfile: WARNING - Null profile for {monitorDevicePath}, skipping save");
+                return;
+            }
+            Console.WriteLine($"SettingsManager.SetMonitorProfile: Saving {monitorDevicePath} - Brightness={profile.Brightness}, Gamma={profile.GammaMode}");
             _data.MonitorProfiles[monitorDevicePath] = profile;
             Save();
         }

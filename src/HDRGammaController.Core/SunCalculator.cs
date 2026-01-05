@@ -1,0 +1,145 @@
+using System;
+
+namespace HDRGammaController.Core
+{
+    /// <summary>
+    /// Calculates sunrise and sunset times using the NOAA solar position algorithm.
+    /// Accurate to within 1-2 minutes for most locations.
+    /// </summary>
+    public static class SunCalculator
+    {
+        private const double DegToRad = Math.PI / 180.0;
+        private const double RadToDeg = 180.0 / Math.PI;
+        
+        /// <summary>
+        /// Calculate sunrise and sunset times for a given location and date.
+        /// </summary>
+        /// <param name="latitude">Latitude in degrees (-90 to 90)</param>
+        /// <param name="longitude">Longitude in degrees (-180 to 180)</param>
+        /// <param name="date">Date to calculate for</param>
+        /// <param name="utcOffset">UTC offset in hours (e.g., -5 for EST)</param>
+        /// <returns>Tuple of (sunrise, sunset) as local TimeSpan</returns>
+        public static (TimeSpan sunrise, TimeSpan sunset) Calculate(
+            double latitude, double longitude, DateTime date, double utcOffset)
+        {
+            // Julian day
+            int year = date.Year;
+            int month = date.Month;
+            int day = date.Day;
+            
+            if (month <= 2)
+            {
+                year -= 1;
+                month += 12;
+            }
+            
+            int A = year / 100;
+            int B = 2 - A + (A / 4);
+            double JD = Math.Floor(365.25 * (year + 4716)) + 
+                        Math.Floor(30.6001 * (month + 1)) + 
+                        day + B - 1524.5;
+            
+            // Julian century
+            double JC = (JD - 2451545.0) / 36525.0;
+            
+            // Geometric mean longitude of sun (degrees)
+            double L0 = Mod360(280.46646 + JC * (36000.76983 + 0.0003032 * JC));
+            
+            // Geometric mean anomaly of sun (degrees)
+            double M = Mod360(357.52911 + JC * (35999.05029 - 0.0001537 * JC));
+            
+            // Eccentricity of Earth's orbit
+            double e = 0.016708634 - JC * (0.000042037 + 0.0000001267 * JC);
+            
+            // Sun's equation of center
+            double C = Math.Sin(M * DegToRad) * (1.914602 - JC * (0.004817 + 0.000014 * JC)) +
+                       Math.Sin(2 * M * DegToRad) * (0.019993 - 0.000101 * JC) +
+                       Math.Sin(3 * M * DegToRad) * 0.000289;
+            
+            // Sun's true longitude
+            double sunLon = L0 + C;
+            
+            // Sun's apparent longitude
+            double omega = 125.04 - 1934.136 * JC;
+            double lambda = sunLon - 0.00569 - 0.00478 * Math.Sin(omega * DegToRad);
+            
+            // Mean obliquity of ecliptic
+            double obliq = 23.0 + (26.0 + (21.448 - JC * (46.8150 + JC * (0.00059 - JC * 0.001813))) / 60.0) / 60.0;
+            
+            // Corrected obliquity
+            double obliqCorr = obliq + 0.00256 * Math.Cos(omega * DegToRad);
+            
+            // Sun's declination
+            double decl = Math.Asin(Math.Sin(obliqCorr * DegToRad) * Math.Sin(lambda * DegToRad)) * RadToDeg;
+            
+            // Equation of time (minutes)
+            double y = Math.Tan(obliqCorr / 2 * DegToRad);
+            y *= y;
+            double eqTime = 4 * RadToDeg * (
+                y * Math.Sin(2 * L0 * DegToRad) -
+                2 * e * Math.Sin(M * DegToRad) +
+                4 * e * y * Math.Sin(M * DegToRad) * Math.Cos(2 * L0 * DegToRad) -
+                0.5 * y * y * Math.Sin(4 * L0 * DegToRad) -
+                1.25 * e * e * Math.Sin(2 * M * DegToRad)
+            );
+            
+            // Hour angle for sunrise/sunset (sun at horizon)
+            double zenith = 90.833; // Standard refraction-corrected zenith
+            double cosHA = (Math.Cos(zenith * DegToRad) / 
+                           (Math.Cos(latitude * DegToRad) * Math.Cos(decl * DegToRad))) -
+                           Math.Tan(latitude * DegToRad) * Math.Tan(decl * DegToRad);
+            
+            // Handle polar day/night
+            if (cosHA > 1)
+            {
+                // Polar night - sun never rises
+                return (TimeSpan.Zero, TimeSpan.Zero);
+            }
+            else if (cosHA < -1)
+            {
+                // Midnight sun - sun never sets
+                return (TimeSpan.Zero, new TimeSpan(24, 0, 0));
+            }
+            
+            double HA = Math.Acos(cosHA) * RadToDeg;
+            
+            // Solar noon (minutes from midnight)
+            double solarNoon = (720 - 4 * longitude - eqTime + utcOffset * 60);
+            
+            // Sunrise and sunset (minutes from midnight)
+            double sunriseMinutes = solarNoon - 4 * HA;
+            double sunsetMinutes = solarNoon + 4 * HA;
+            
+            // Normalize to 0-1440 range
+            sunriseMinutes = Mod1440(sunriseMinutes);
+            sunsetMinutes = Mod1440(sunsetMinutes);
+            
+            return (
+                TimeSpan.FromMinutes(sunriseMinutes),
+                TimeSpan.FromMinutes(sunsetMinutes)
+            );
+        }
+        
+        /// <summary>
+        /// Calculate sunrise/sunset for today at the given location, using local timezone.
+        /// </summary>
+        public static (TimeSpan sunrise, TimeSpan sunset) CalculateToday(double latitude, double longitude)
+        {
+            var now = DateTime.Now;
+            var utcOffset = TimeZoneInfo.Local.GetUtcOffset(now).TotalHours;
+            return Calculate(latitude, longitude, now, utcOffset);
+        }
+        
+        private static double Mod360(double x)
+        {
+            return x - 360 * Math.Floor(x / 360);
+        }
+        
+        private static double Mod1440(double x)
+        {
+            while (x < 0) x += 1440;
+            while (x >= 1440) x -= 1440;
+            return x;
+        }
+    }
+}

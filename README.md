@@ -7,6 +7,12 @@ A Windows System Tray application to manage HDR Gamma settings on a per-monitor 
 - **Per-Monitor Gamma Control**: Apply Gamma 2.2, 2.4, or Windows Default independently for each HDR monitor
 - **Real Monitor Names**: Displays actual monitor names from EDID (e.g., "LG OLED TV") instead of generic identifiers
 - **Profile Persistence**: Remembers your gamma settings per monitor and restores them automatically on startup
+- **Night Mode**: 
+  - Automatically adjusts color temperature based on sunset/sunrise at your location
+  - Smooth fading transitions (configurable duration)
+  - Manual toggle override via Tray or Hotkey (`Win + Shift + N`)
+  - Adjustable color temperature (1900K - 6500K)
+- **Advanced Color Control**: Fine-tune Brightness, Contrast, Saturation, Tint, and RGB Gains/Offsets per monitor
 - **System Tray Integration**: Unobtrusive background operation with dark/light mode support
 - **Start with Windows**: Toggle auto-start from the tray menu
 - **Global Hotkeys**: Quickly switch profiles on the focused monitor
@@ -14,6 +20,7 @@ A Windows System Tray application to manage HDR Gamma settings on a per-monitor 
   - `Win + Shift + F2`: Gamma 2.4
   - `Win + Shift + F3`: Windows Default
   - `Win + Shift + F4`: Panic Mode (clear all gamma tables)
+  - `Win + Shift + N`: Toggle Night Mode (On/Off)
 - **Auto-Recovery**: Automatically reapplies settings after display sleep/wake or configuration changes
 - **HDR-Aware**: Only shows gamma options for HDR-active monitors (SDR monitors display informational message)
 - **Auto-Download ArgyllCMS**: Automatically downloads required ArgyllCMS binaries if not found
@@ -59,6 +66,11 @@ dotnet publish src/HDRGammaController -c Release -r win-x64 --self-contained tru
    - **Gamma 2.4**: BT.1886 / dark room / film mastering
    - **Windows Default**: Native piecewise sRGB (bypass)
 4. **Enable auto-start** via "Start with Windows" menu option
+5. **Open Settings** (via Tray -> Settings) for advanced control:
+   - **Night Mode**: Enable "Sunrise/Sunset" for automatic adjustment based on your location (Latitude/Longitude).
+   - **Calibration**: Adjust Brightness, Temperature, Tint, and RGB Gains/Offsets for fine-tuning your display's white point and color balance.
+
+   **Note**: All settings are saved automatically to `%LOCALAPPDATA%\HDRGammaController\settings.json`.
 
 Your selections are automatically saved and restored on next launch.
 
