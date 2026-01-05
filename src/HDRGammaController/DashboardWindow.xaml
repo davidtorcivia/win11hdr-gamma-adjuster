@@ -107,7 +107,10 @@
                                             
                                             <TextBlock Text="Brightness:" Foreground="{StaticResource TextDim}" FontSize="11"/>
                                             <ProgressBar Value="{Binding CurrentBrightness}" Height="4" Margin="0,2,0,4" Background="#444" Foreground="{StaticResource AccentBrush}"/>
-                                            <TextBlock Text="{Binding CurrentBrightness, StringFormat={}{0}%}" FontSize="12"/>
+                                            <TextBlock Text="{Binding CurrentBrightness, StringFormat={}{0}%}" FontSize="12" Margin="0,0,0,8"/>
+
+                                            <TextBlock Text="Color Temp:" Foreground="{StaticResource TextDim}" FontSize="11"/>
+                                            <TextBlock Text="{Binding CurrentTemperatureText}" FontSize="12"/>
                                         </StackPanel>
                                         
                                         <!-- Actions -->

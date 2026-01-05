@@ -300,7 +300,7 @@ namespace HDRGammaController.ViewModels
 
         private void OpenDashboard()
         {
-            var dashboard = new DashboardWindow(_monitorManager, _settingsManager, RequestApply);
+            var dashboard = new DashboardWindow(_monitorManager, _settingsManager, _nightModeService, RequestApply);
             dashboard.Show(); 
         }
 
