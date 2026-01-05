@@ -105,82 +105,94 @@ namespace HDRGammaController.Core
         {
             _settings = settings;
             
-            // Check every 30 seconds
-            _timer = new System.Timers.Timer(30000);
+            // One-shot timer, we restart it manually with dynamic intervals
+            _timer = new System.Timers.Timer(1000); 
+            _timer.AutoReset = false;
             _timer.Elapsed += OnTimerElapsed;
-            _timer.AutoReset = true;
         }
         
         public void UpdateSettings(NightModeSettings newSettings)
         {
+            // If specific settings changed (like toggle/times), force immediate re-eval
+            bool wasEnabled = _settings.Enabled;
             _settings = newSettings;
-            UpdateBlend();
             
-            // If the service is running but disabled in new settings, stop it? 
-            // Or just rely on UpdateBlend checking Enabled.
-            // If enabled went from false to true, we might need to ensure timer is running.
-            if (_settings.Enabled && !_timer.Enabled)
+            if (_settings.Enabled && !wasEnabled)
             {
                 Start();
+            }
+            else
+            {
+                // Force an update to catch new times/durations immediately
+                UpdateBlend(); 
+                ScheduleNextTick();
             }
         }
         
         public void Start()
         {
             if (!_settings.Enabled) return;
-            
-            // Initial check
             UpdateBlend();
-            _timer.Start();
+            ScheduleNextTick();
         }
         
         public void Stop()
         {
             _timer.Stop();
         }
-        
-        /// <summary>
-        /// Immediately enables night mode (for quick toggle).
-        /// </summary>
-        public void EnableNow()
-        {
-            _currentBlend = 1.0;
-            BlendChanged?.Invoke(_currentBlend);
-            ApplyCurrentAdjustments();
-        }
-        
-        /// <summary>
-        /// Immediately disables night mode (for quick toggle).
-        /// </summary>
-        public void DisableNow()
-        {
-            _currentBlend = 0.0;
-            BlendChanged?.Invoke(_currentBlend);
-            ApplyCurrentAdjustments();
-        }
-        
-        /// <summary>
-        /// Gets the calibration settings with night mode adjustments blended in.
-        /// </summary>
-        public CalibrationSettings GetNightModeCalibration(CalibrationSettings baseCalibration)
-        {
-            if (_currentBlend < 0.01) return baseCalibration;
-            
-            var result = baseCalibration.Clone();
-            
-            // Blend in night mode temperature
-            result.Temperature += _settings.Temperature * _currentBlend;
-            result.Temperature = Math.Clamp(result.Temperature, -50.0, 50.0);
-            
-            // Apply night mode algorithm
-            result.Algorithm = _settings.Algorithm;
-            
-            return result;
-        }
-        
+
         private void OnTimerElapsed(object? sender, ElapsedEventArgs e)
         {
             UpdateBlend();
+            ScheduleNextTick();
+        }
+
+        private void ScheduleNextTick()
+        {
+            if (!_settings.Enabled) return;
+
+            var now = DateTime.Now.TimeOfDay;
+            bool isFading = IsInAnyFadeWindow(now);
+
+            double intervalMs = 30000; // Default stable interval (30s)
+
+            if (isFading)
+            {
+                // Dynamic Interval Logic:
+                // We want to be "imperceptibly smooth".
+                // Target 100 steps for the entire transition.
+                // For 30 mins (1800s): 1800/100 = 18s interval.
+                // Delta per step approx 38K (invisible).
+                
+                double fadeDurationSeconds = _settings.FadeMinutes * 60.0;
+                double targetIntervalSeconds = fadeDurationSeconds / 100.0;
+                
+                // Clamp: Never faster than 4s (performance), never slower than 30s (responsiveness)
+                intervalMs = Math.Clamp(targetIntervalSeconds * 1000, 4000, 30000);
+            }
+            
+            _timer.Interval = intervalMs;
+            _timer.Start();
+        }
+        
+        private bool IsInAnyFadeWindow(TimeSpan now)
+        {
+            if (_settings.FadeMinutes <= 0) return false;
+
+            var (startTime, endTime) = _settings.GetEffectiveTimes();
+            var fadeDuration = TimeSpan.FromMinutes(_settings.FadeMinutes);
+
+            // Fade In Window (Start - Fade to Start)
+            var fadeInStart = startTime - fadeDuration;
+            if (fadeInStart < TimeSpan.Zero) fadeInStart += TimeSpan.FromHours(24);
+            if (IsInFadeRange(now, fadeInStart, startTime)) return true;
+
+            // Fade Out Window (End to End + Fade)
+            var fadeOutEnd = endTime + fadeDuration;
+            if (fadeOutEnd > TimeSpan.FromHours(24)) fadeOutEnd -= TimeSpan.FromHours(24);
+            if (IsInFadeRange(now, endTime, fadeOutEnd)) return true;
+
+            return false;
         }
         
         private void UpdateBlend()

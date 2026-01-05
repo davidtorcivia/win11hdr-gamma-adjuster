@@ -13,18 +13,24 @@ namespace HDRGammaController
     {
         private readonly MonitorManager _monitorManager;
         private readonly SettingsManager _settingsManager;
+        private readonly NightModeService _nightModeService;
         private readonly Action<MonitorInfo, GammaMode, CalibrationSettings> _applyCallback;
         
         public DashboardWindow(
             MonitorManager monitorManager, 
             SettingsManager settingsManager,
+            NightModeService nightModeService,
             Action<MonitorInfo, GammaMode, CalibrationSettings> applyCallback)
         {
             InitializeComponent();
             _monitorManager = monitorManager;
             _settingsManager = settingsManager;
+            _nightModeService = nightModeService;
             _applyCallback = applyCallback;
             
+            // Re-refresh when simple blend changes (for live update)
+            _nightModeService.BlendChanged += (val) => Dispatcher.Invoke(RefreshMonitors);
+
             RefreshMonitors();
         }
         
@@ -32,6 +38,12 @@ namespace HDRGammaController
         {
             var monitors = _monitorManager.EnumerateMonitors();
             var items = new List<DashboardItem>();
+            
+            // Night mode data
+            double blend = _nightModeService.CurrentBlend;
+            var nmSettings = _settingsManager.NightMode;
+            double nightShift = (nmSettings.TemperatureKelvin - 6500) / 70.0;
+            double blendedShift = nightShift * blend;
             
             foreach (var m in monitors)
             {
@@ -48,6 +60,15 @@ namespace HDRGammaController
                 double brightness = profile?.Brightness ?? 100;
                 GammaMode gamma = profile?.GammaMode ?? m.CurrentGamma;
                 
+                // Calculate Effective Temperature
+                double baseTemp = profile?.Temperature ?? 0;
+                double offset = profile?.TemperatureOffset ?? 0;
+                double effectiveTemp = baseTemp + offset + blendedShift;
+                int kelvin = (int)(6500 + effectiveTemp * 70);
+
+                string tempText = $"{kelvin}K";
+                if (blend > 0.01) tempText += " (Night)";
+                
                 items.Add(new DashboardItem
                 {
                     Model = m,
@@ -55,7 +76,8 @@ namespace HDRGammaController
                     BadgeText = badgeText,
                     BadgeColor = badgeColor,
                     CurrentGamma = gamma,
-                    CurrentBrightness = brightness
+                    CurrentBrightness = brightness,
+                    CurrentTemperatureText = tempText
                 });
             }
             
@@ -70,6 +92,7 @@ namespace HDRGammaController
             public Brush BadgeColor { get; set; } = Brushes.Gray;
             public GammaMode CurrentGamma { get; set; }
             public double CurrentBrightness { get; set; }
+            public string CurrentTemperatureText { get; set; } = "";
         }
 
         private void TitleBar_MouseDown(object sender, MouseButtonEventArgs e)
