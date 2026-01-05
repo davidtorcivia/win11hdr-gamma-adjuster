@@ -14,12 +14,15 @@ namespace HDRGammaController.ViewModels
 {
     public class TrayViewModel
     {
+        public event Action<string, string>? NotificationRequested;
+        
         private readonly MonitorManager _monitorManager;
         private readonly ProfileManager _profileManager;
         private readonly DispwinRunner _dispwinRunner;
         private readonly SettingsManager _settingsManager;
         private readonly HotkeyManager? _hotkeyManager;
         private readonly NightModeService _nightModeService;
+        private readonly UpdateService _updateService;
         
         private readonly Dictionary<int, Action<MonitorInfo>> _hotkeyActions = new Dictionary<int, Action<MonitorInfo>>();
         private int _panicId = -1;
@@ -33,6 +36,7 @@ namespace HDRGammaController.ViewModels
         public ICommand ExitCommand { get; }
         public ICommand RefreshCommand { get; }
         public ICommand StartupCommand { get; }
+        public ICommand DashboardCommand { get; }
 
         public TrayViewModel(HotkeyManager? hotkeyManager = null)
         {
@@ -63,6 +67,7 @@ namespace HDRGammaController.ViewModels
             ExitCommand = new RelayCommand(_ => Application.Current.Shutdown());
             RefreshCommand = new RelayCommand(_ => RefreshMonitors());
             StartupCommand = new RelayCommand(_ => ToggleStartup());
+            DashboardCommand = new RelayCommand(_ => OpenDashboard());
 
             RefreshMonitors();
             
@@ -73,6 +78,19 @@ namespace HDRGammaController.ViewModels
             {
                 RegisterHotkeys();
                 _hotkeyManager.HotkeyPressed += OnHotkeyPressed;
+            }
+            
+            _updateService = new UpdateService();
+            CheckForUpdates();
+        }
+        
+        private async void CheckForUpdates()
+        {
+            var info = await _updateService.CheckForUpdatesAsync();
+            if (info.IsUpdateAvailable)
+            {
+                 NotificationRequested?.Invoke("Update Available", 
+                     $"A new version ({info.Version}) is available.\nClick here to download.");
             }
         }
         
@@ -190,6 +208,9 @@ namespace HDRGammaController.ViewModels
                     brightness = profile.Brightness;
                  }
 
+                // Apply static offset
+                calibration.Temperature += calibration.TemperatureOffset;
+
                 // Apply night mode temperature if active
                 if (nightModeActive)
                 {
@@ -201,15 +222,15 @@ namespace HDRGammaController.ViewModels
                     // Blend the shift
                     double blendedShift = nightShift * blend;
                     
-                    // Combine with user's specific monitor calibration
                     calibration.Temperature += blendedShift;
-                    calibration.Temperature = Math.Clamp(calibration.Temperature, -50.0, 50.0);
                     
                     if (blend > 0.5)
                     {
                         calibration.Algorithm = nightMode.Algorithm;
                     }
                 }
+                
+                calibration.Temperature = Math.Clamp(calibration.Temperature, -50.0, 50.0);
                 
                 Console.WriteLine($"RequestApply: Applying {monitor.FriendlyName} - Gamma={mode}, Brightness={brightness}, Temp={calibration.Temperature:F1}");
                 _dispwinRunner.ApplyGamma(monitor, mode, monitor.SdrWhiteLevel, calibration); 
@@ -231,6 +252,10 @@ namespace HDRGammaController.ViewModels
 
         private void ApplyAll()
         {
+            double blend = _nightModeService.CurrentBlend;
+            if (_nightModeManuallyDisabled) blend = 0.0;
+            bool nightModeActive = blend > 0.001;
+
             foreach(var item in TrayItems)
             {
                 if (item is MonitorViewModel vm)
@@ -239,7 +264,7 @@ namespace HDRGammaController.ViewModels
                     var profile = _settingsManager.GetMonitorProfile(vm.Model.MonitorDevicePath);
                     var mode = profile?.GammaMode ?? vm.Model.CurrentGamma;
                     
-                    if (mode == GammaMode.WindowsDefault) continue;
+                    if (mode == GammaMode.WindowsDefault && !nightModeActive) continue;
                     
                     RequestApply(vm.Model, mode);
                 }
@@ -273,6 +298,12 @@ namespace HDRGammaController.ViewModels
             }
         }
 
+        private void OpenDashboard()
+        {
+            var dashboard = new DashboardWindow(_monitorManager, _settingsManager, RequestApply);
+            dashboard.Show(); 
+        }
+
         public void RefreshMonitors()
         {
             Console.WriteLine("TrayViewModel: Refreshing monitors...");
@@ -286,6 +317,9 @@ namespace HDRGammaController.ViewModels
             }
             else
             {
+                TrayItems.Add(new ActionViewModel("Open Dashboard...", DashboardCommand));
+                TrayItems.Add(new ActionViewModel("───────────", null));
+                
                 int index = 1;
                 foreach (var m in monitors)
                 {

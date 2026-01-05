@@ -17,6 +17,11 @@ namespace HDRGammaController.Core
         public double Temperature { get; set; } = 0.0;
         
         /// <summary>
+        /// Temperature offset specific to this monitor (to match other monitors).
+        /// </summary>
+        public double TemperatureOffset { get; set; } = 0.0;
+        
+        /// <summary>
         /// Tint adjustment (-50 to +50).
         /// Negative = more green, Positive = more magenta.
         /// </summary>
@@ -71,6 +76,7 @@ namespace HDRGammaController.Core
         public bool HasAdjustments =>
             Math.Abs(Brightness - 100.0) > 0.01 ||
             Math.Abs(Temperature) > 0.01 ||
+            Math.Abs(TemperatureOffset) > 0.01 ||
             Math.Abs(Tint) > 0.01 ||
             Math.Abs(RedGain - 1.0) > 0.001 ||
             Math.Abs(GreenGain - 1.0) > 0.001 ||
@@ -92,6 +98,7 @@ namespace HDRGammaController.Core
             Brightness = this.Brightness,
             UseLinearBrightness = this.UseLinearBrightness,
             Temperature = this.Temperature,
+            TemperatureOffset = this.TemperatureOffset,
             Tint = this.Tint,
             RedGain = this.RedGain,
             GreenGain = this.GreenGain,
