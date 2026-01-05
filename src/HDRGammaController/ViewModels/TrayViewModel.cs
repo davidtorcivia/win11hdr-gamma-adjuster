@@ -19,6 +19,7 @@ namespace HDRGammaController.ViewModels
         private readonly DispwinRunner _dispwinRunner;
         private readonly SettingsManager _settingsManager;
         private readonly HotkeyManager? _hotkeyManager;
+        private readonly NightModeService _nightModeService;
         
         private readonly Dictionary<int, Action<MonitorInfo>> _hotkeyActions = new Dictionary<int, Action<MonitorInfo>>();
         private int _panicId = -1;
@@ -37,6 +38,22 @@ namespace HDRGammaController.ViewModels
         {
             _monitorManager = new MonitorManager();
             _settingsManager = new SettingsManager();
+            
+            // Initialize Night Mode Service
+            _nightModeService = new NightModeService(_settingsManager.NightMode);
+            _nightModeService.BlendChanged += (blend) => 
+            {
+                // Dispatch to UI thread if needed (though ApplyAll primarily runs dispwin which is blocking/background)
+                // WPF Observables need UI thread, but ApplyAll primarily affects hardware. 
+                // However, TrayItems might update. Better invoke.
+                Application.Current.Dispatcher.Invoke(() => ApplyAll());
+            };
+            
+            _settingsManager.NightModeChanged += (newSettings) => _nightModeService.UpdateSettings(newSettings);
+            
+            // Start service
+            _nightModeService.Start();
+
             // Assumes template is in the same directory (needs to be sourced by user)
             string profileTemplatePath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "srgb_to_gamma2p2_100_mhc2.icm");
             _profileManager = new ProfileManager(profileTemplatePath);
@@ -162,9 +179,13 @@ namespace HDRGammaController.ViewModels
         private void ApplyAll()
         {
             var nightMode = _settingsManager.NightMode;
-            bool nightModeActive = !_nightModeManuallyDisabled && 
-                                   nightMode.Enabled && 
-                                   IsNightModeTimeActive(nightMode);
+            // Use service's blend factor which handles fading and scheduling
+            double blend = _nightModeService.CurrentBlend;
+            
+            // Allow manual override
+            if (_nightModeManuallyDisabled) blend = 0.0;
+            
+            bool nightModeActive = blend > 0.001;
             
             foreach(var item in TrayItems)
             {
@@ -185,33 +206,38 @@ namespace HDRGammaController.ViewModels
                         var calibration = profile.ToCalibrationSettings();
                         
                         // Apply night mode temperature if active
+                        // We ADD the night mode temp to the base - assuming base is 0-based adjustment
+                        // But wait, NightMode.TemperatureKelvin is absolute (e.g. 2700K).
+                        // While calibration.Temperature is -50..+50 relative shift.
+                        
                         if (nightModeActive)
                         {
-                            // Convert Kelvin to temperature shift
-                            calibration.Temperature = (nightMode.TemperatureKelvin - 6500) / 70.0;
-                            calibration.Algorithm = nightMode.Algorithm;
+                            // Calculate night mode shift (-50 to +50 scale)
+                            // 6500K = 0, 2700K ~= -54 (Limit is -50)
+                            // Formula: temp = (kelvin - 6500) / 70.0
+                            double nightShift = (nightMode.TemperatureKelvin - 6500) / 70.0;
+                            
+                            // Blend the shift
+                            double blendedShift = nightShift * blend;
+                            
+                            // Combine with user's specific monitor calibration
+                            // (e.g. if user set -5 for specific monitor, and night mode is -30, result is -35)
+                            calibration.Temperature += blendedShift;
+                            
+                            // Clamp
+                            calibration.Temperature = Math.Clamp(calibration.Temperature, -50.0, 50.0);
+                            
+                            // Use Night Mode algorithm if blending is significant
+                            if (blend > 0.5)
+                            {
+                                calibration.Algorithm = nightMode.Algorithm;
+                            }
                         }
                         
-                        Console.WriteLine($"ApplyAll: Applying {vm.Model.FriendlyName} - Gamma={gammaMode}, Brightness={profile.Brightness}");
+                        Console.WriteLine($"ApplyAll: Applying {vm.Model.FriendlyName} - Gamma={gammaMode}, Brightness={profile.Brightness}, Temp={calibration.Temperature:F1}");
                         _dispwinRunner.ApplyGamma(vm.Model, gammaMode, vm.Model.SdrWhiteLevel, calibration); 
                     } catch {}
                 }
-            }
-        }
-        
-        private bool IsNightModeTimeActive(NightModeSettings settings)
-        {
-            var (startTime, endTime) = settings.GetEffectiveTimes();
-            var now = DateTime.Now.TimeOfDay;
-            
-            // Handle overnight periods (e.g., sunset 17:00 to sunrise 07:00)
-            if (startTime > endTime)
-            {
-                return now >= startTime || now <= endTime;
-            }
-            else
-            {
-                return now >= startTime && now <= endTime;
             }
         }
 

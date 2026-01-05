@@ -83,8 +83,8 @@ namespace HDRGammaController.Core
     /// </summary>
     public class NightModeService : IDisposable
     {
-        private readonly System.Timers.Timer _timer;
-        private readonly NightModeSettings _settings;
+        private System.Timers.Timer _timer;
+        private NightModeSettings _settings;
         private double _currentBlend = 0.0; // 0 = day mode, 1 = full night mode
         private bool _isTransitioning = false;
         
@@ -109,6 +109,20 @@ namespace HDRGammaController.Core
             _timer = new System.Timers.Timer(30000);
             _timer.Elapsed += OnTimerElapsed;
             _timer.AutoReset = true;
+        }
+        
+        public void UpdateSettings(NightModeSettings newSettings)
+        {
+            _settings = newSettings;
+            UpdateBlend();
+            
+            // If the service is running but disabled in new settings, stop it? 
+            // Or just rely on UpdateBlend checking Enabled.
+            // If enabled went from false to true, we might need to ensure timer is running.
+            if (_settings.Enabled && !_timer.Enabled)
+            {
+                Start();
+            }
         }
         
         public void Start()

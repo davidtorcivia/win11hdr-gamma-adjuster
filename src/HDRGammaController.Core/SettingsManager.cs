@@ -122,6 +122,8 @@ namespace HDRGammaController.Core
         private SettingsData _data = new SettingsData();
 
         public NightModeSettings NightMode => _data.NightMode.ToNightModeSettings();
+        
+        public event Action<NightModeSettings>? NightModeChanged;
 
         public SettingsManager()
         {
@@ -219,6 +221,7 @@ namespace HDRGammaController.Core
         {
             _data.NightMode = NightModeSettingsData.FromNightModeSettings(settings);
             Save();
+            NightModeChanged?.Invoke(settings);
         }
 
         private class SettingsData
