@@ -314,6 +314,7 @@
                                                HorizontalAlignment="Right"/>
                                 </Grid>
                                 
+                                <!-- Tint Section -->
                                 <TextBlock Text="Tint" Style="{StaticResource FieldLabel}"/>
                                 <Grid>
                                     <Grid.ColumnDefinitions>
@@ -338,6 +339,10 @@
                         <Border Style="{StaticResource SectionCard}">
                             <StackPanel>
                                 <TextBlock Text="Night Mode" Style="{StaticResource SectionHeader}"/>
+                                
+                                <!-- Global Settings -->
+                                <TextBlock Text="Global Settings" Style="{StaticResource SectionHeader}" FontSize="12" Margin="0,0,0,8" Foreground="{StaticResource TextDim}"/>
+                                
                                 <TextBlock Text="Quick toggle: Win+Shift+N • Applies to all HDR monitors" 
                                            Foreground="{StaticResource TextDim}" 
                                            FontSize="11" Margin="0,-8,0,8"/>
@@ -431,6 +436,30 @@
                                                    Style="{StaticResource ValueDisplay}" Width="40"/>
                                     </Grid>
                                 </StackPanel>
+                                
+                                <!-- Per Monitor Settings -->
+                                <Separator Margin="0,16,0,16" Background="#3F3F3F"/>
+                                <TextBlock Text="Per-Monitor Override" Style="{StaticResource SectionHeader}" FontSize="12" Margin="0,0,0,8" Foreground="{StaticResource TextDim}"/>
+                                <TextBlock Text="Fine-tune this monitor's temperature relative to the global setting." 
+                                           Foreground="{StaticResource TextDim}" FontSize="11" Margin="0,-4,0,12" TextWrapping="Wrap"/>
+                                
+                                <TextBlock Text="Temperature Offset" Style="{StaticResource FieldLabel}"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Slider x:Name="TempOffsetSlider" Grid.Column="0" Style="{StaticResource ModernSlider}"
+                                            Minimum="-20" Maximum="20" Value="0"
+                                            ValueChanged="TempOffsetSlider_ValueChanged"/>
+                                    <TextBlock x:Name="TempOffsetValue" Grid.Column="1" Text="0" 
+                                               Style="{StaticResource ValueDisplay}" Width="40"/>
+                                </Grid>
+                                <Grid>
+                                    <TextBlock Text="Warmer" Foreground="{StaticResource TextDim}" FontSize="10"/>
+                                    <TextBlock Text="Cooler" Foreground="{StaticResource TextDim}" FontSize="10" 
+                                               HorizontalAlignment="Right"/>
+                                </Grid>
                             </StackPanel>
                         </Border>
                         

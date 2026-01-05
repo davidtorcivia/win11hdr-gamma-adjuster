@@ -15,6 +15,7 @@ namespace HDRGammaController.Core
         public double Brightness { get; set; } = 100.0;
         public bool UseLinearBrightness { get; set; } = false;
         public double Temperature { get; set; } = 0.0;
+        public double TemperatureOffset { get; set; } = 0.0;
         public double Tint { get; set; } = 0.0;
         public double RedGain { get; set; } = 1.0;
         public double GreenGain { get; set; } = 1.0;
@@ -28,6 +29,7 @@ namespace HDRGammaController.Core
             Brightness = Brightness,
             UseLinearBrightness = UseLinearBrightness,
             Temperature = Temperature,
+            TemperatureOffset = TemperatureOffset,
             Tint = Tint,
             RedGain = RedGain,
             GreenGain = GreenGain,
@@ -43,6 +45,7 @@ namespace HDRGammaController.Core
             Brightness = settings.Brightness,
             UseLinearBrightness = settings.UseLinearBrightness,
             Temperature = settings.Temperature,
+            TemperatureOffset = settings.TemperatureOffset,
             Tint = settings.Tint,
             RedGain = settings.RedGain,
             GreenGain = settings.GreenGain,
@@ -58,6 +61,7 @@ namespace HDRGammaController.Core
             Brightness = Brightness,
             UseLinearBrightness = UseLinearBrightness,
             Temperature = Temperature,
+            TemperatureOffset = TemperatureOffset,
             Tint = Tint,
             RedGain = RedGain,
             GreenGain = GreenGain,

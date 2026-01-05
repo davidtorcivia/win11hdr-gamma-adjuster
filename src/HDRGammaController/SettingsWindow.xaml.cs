@@ -166,6 +166,8 @@ namespace HDRGammaController
             // Temperature/Tint
             TemperatureSlider.Value = _currentProfile.Temperature;
             TemperatureValue.Text = $"{_currentProfile.Temperature:F0}";
+            TempOffsetSlider.Value = _currentProfile.TemperatureOffset;
+            TempOffsetValue.Text = $"{_currentProfile.TemperatureOffset:F0}";
             TintSlider.Value = _currentProfile.Tint;
             TintValue.Text = $"{_currentProfile.Tint:F0}";
             
@@ -275,6 +277,14 @@ namespace HDRGammaController
             if (_isLoading) return;
             TemperatureValue.Text = $"{e.NewValue:F0}";
             _currentProfile.Temperature = e.NewValue;
+            ScheduleLivePreview();
+        }
+
+        private void TempOffsetSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_isLoading) return;
+            TempOffsetValue.Text = $"{e.NewValue:F0}";
+            _currentProfile.TemperatureOffset = e.NewValue;
             ScheduleLivePreview();
         }
         
@@ -466,6 +476,7 @@ namespace HDRGammaController
             _currentProfile.Brightness = BrightnessSlider.Value;
             _currentProfile.UseLinearBrightness = EnhanceShadowsCheck.IsChecked != true;
             _currentProfile.Temperature = TemperatureSlider.Value;
+            _currentProfile.TemperatureOffset = TempOffsetSlider.Value;
             _currentProfile.Tint = TintSlider.Value;
             _currentProfile.RedGain = RedGainSlider.Value;
             _currentProfile.GreenGain = GreenGainSlider.Value;

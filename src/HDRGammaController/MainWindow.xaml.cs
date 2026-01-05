@@ -34,6 +34,12 @@ namespace HDRGammaController
             Console.WriteLine("MainWindow: Initializing TrayViewModel...");
             _trayViewModel = new TrayViewModel(_hotkeyManager);
             
+            // Subscribe to notifications
+            _trayViewModel.NotificationRequested += (title, msg) => 
+            {
+                MyNotifyIcon.ShowBalloonTip(title, msg, Hardcodet.Wpf.TaskbarNotification.BalloonIcon.Info);
+            };
+            
             // Set DataContext for the specific bindings in XAML
             MyNotifyIcon.DataContext = _trayViewModel;
 

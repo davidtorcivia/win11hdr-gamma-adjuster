@@ -5,10 +5,10 @@ namespace HDRGammaController.ViewModels
     public class ActionViewModel
     {
         public string Header { get; }
-        public ICommand Command { get; }
+        public ICommand? Command { get; }
         public bool IsSeparator { get; }
 
-        public ActionViewModel(string header, ICommand command)
+        public ActionViewModel(string header, ICommand? command)
         {
             Header = header;
             Command = command;

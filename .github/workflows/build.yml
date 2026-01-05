@@ -55,6 +55,7 @@ jobs:
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v1
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           tag_name: latest
           name: Latest Auto-Build
           files: |
@@ -62,4 +63,3 @@ jobs:
             HDRGammaController_Full.zip
           draft: false
           prerelease: true
-          overwrite: true

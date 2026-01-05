@@ -1,0 +1,476 @@
+# HDR Gamma Controller: A Technical Whitepaper
+
+> *The machine promises fidelity but delivers translation—and every translation is a betrayal.*
+
+---
+
+## Abstract
+
+Windows 11's HDR implementation employs piecewise sRGB as the transfer function for standard dynamic range content displayed within an HDR composition space—a technical decision that, while nominally compliant with the sRGB specification, introduces a fundamental perceptual mismatch with the overwhelming majority of content mastered on gamma 2.2 displays, manifesting as elevated shadow regions, reduced contrast, and the characteristic "washed out" appearance that has plagued HDR adoption on the Windows platform since its inception.
+
+This whitepaper documents the mathematical foundations, engineering decisions, and calibration philosophy underlying the HDR Gamma Controller, a tool that corrects this mismatch through the application of per-channel 1D Look-Up Tables within the Windows Advanced Color pipeline; it examines the relevant transfer functions, derives the correction algorithm from first principles, and explores the additional calibration adjustments—color temperature, tint, brightness—that enable fine-grained control over the visual output, with particular attention to why specific mathematical choices were made, grounded always in the physics of light perception and the engineering constraints of the Windows HDR compositor.
+
+---
+
+## Table of Contents
+
+1. [Introduction: The HDR Transition Problem](#1-introduction-the-hdr-transition-problem)
+2. [The SDR Transfer Function Mismatch](#2-the-sdr-transfer-function-mismatch)
+3. [Mathematical Foundations](#3-mathematical-foundations)
+4. [The Transformation Pipeline](#4-the-transformation-pipeline)
+5. [HDR Headroom Preservation](#5-hdr-headroom-preservation)
+6. [Calibration Adjustments](#6-calibration-adjustments)
+7. [Implementation Architecture](#7-implementation-architecture)
+8. [Windows HDR Pipeline Context](#8-windows-hdr-pipeline-context)
+9. [Verification and Accuracy](#9-verification-and-accuracy)
+10. [Acknowledgements](#10-acknowledgements)
+11. [References](#11-references)
+
+---
+
+## 1. Introduction: The HDR Transition Problem
+
+The transition to High Dynamic Range displays represents one of the most significant advances in visual reproduction since the shift from standard definition to high definition, expanding the representable luminance range from the few hundred nits of SDR displays to peaks of 1,000, 4,000, or even 10,000 nits while simultaneously lowering the black floor to near-perfect darkness on OLED and Mini-LED panels—an expansion that promises images approximating, for the first time in consumer technology, the dynamic range of human vision itself.
+
+And yet the transition has been anything but smooth, for Windows 11, while making strides in streamlining the HDR experience—finally allowing for workstations where HDR remains always enabled throughout the desktop—has introduced along the way a subtle but pernicious problem in how it handles the vast corpus of SDR content that must coexist with native HDR material, a problem that reveals itself most clearly in the shadows and low mid-tones where the discrepancy between what the system assumes and what the content actually requires becomes impossible to ignore.
+
+The problem is translation: when an SDR application renders its content, Windows must lift that content into the HDR10 composition space for display, a process that requires mapping SDR code values to specific luminance levels within the broader HDR range according to a *transfer function* whose choice determines how the original content appears on the HDR-enabled display. Microsoft chose piecewise sRGB; the industry standard, the curve on which virtually all content has been mastered for the past three decades, is gamma 2.2. The difference between these two curves, concentrated as it is in the shadow and lower mid-tone regions, produces a measurable, reproducible, and—provided one understands the mathematics involved—correctable error that manifests as the very haziness and flatness that has driven countless observers to disable HDR in frustration, wondering why the technology that promised deeper blacks delivers instead a pervasive gray.
+
+---
+
+## 2. The SDR Transfer Function Mismatch
+
+### 2.1 A Brief History of Display Gamma
+
+The concept of "gamma" in display technology originates from the non-linear voltage-to-light relationship inherent in cathode ray tubes, wherein a CRT receiving a voltage signal *V* produces light output *L* following approximately a power law:
+
+$$L = V^\gamma$$
+
+For a typical CRT, γ ≈ 2.5, a non-linearity that was never a design choice but rather a physical characteristic of the phosphor excitation process that content producers quickly adapted to by *pre-compensating* at the source, applying an inverse gamma encoding so that the roundtrip from camera to display preserved perceptual linearity—a system built on accidents and expedience that nonetheless became the foundation upon which all SDR imaging would rest.[^1]
+
+Over decades, through a process of standardization not unlike natural selection, **gamma 2.2** emerged as the de facto standard for computer monitors and general content creation (though cinema is typically gamma 2.4), representing a reasonable approximation for viewing in uncontrolled lighting conditions exceeding 50 lux as specified in various industry documents and adopted by virtually every computer monitor manufactured in the past three decades.[^2]
+
+### 2.2 The sRGB Standard
+
+In 1996, an attempt was made to formalize the color space of computer displays: the sRGB standard (IEC 61966-2-1). Rather than specifying a pure power-law gamma, sRGB defines a *piecewise* transfer function with a linear segment near black:
+
+$$
+V_{sRGB} = \begin{cases}
+12.92 \times L & \text{if } L \leq 0.0031308 \\
+1.055 \times L^{1/2.4} - 0.055 & \text{if } L > 0.0031308
+\end{cases}
+$$
+
+The linear segment (L ≤ 0.0031308) exists for numerical stability near zero, avoiding the infinite slope that a pure power law exhibits at the origin, while the exponent 1/2.4 in the non-linear segment, combined with the offset terms, produces a curve that approximates gamma 2.2 over most of its range but diverges in precisely the shadow regions where the human eye is most sensitive to error.[^3]
+
+### 2.3 Microsoft's Choice
+
+When Windows 11 renders SDR content within the HDR desktop composition, it employs the piecewise sRGB EOTF—Electro-Optical Transfer Function—to map SDR code values to linear light values under the assumption that SDR content was encoded with the sRGB inverse EOTF and therefore decoding with sRGB produces accurate linear light, an assumption that, while technically correct according to the sRGB specification, proves practically wrong for virtually all content because the monitors used by game developers, web designers, photographers, and colorists overwhelmingly implement pure gamma 2.2 rather than piecewise sRGB, because artists adjust their work until it *looks correct* on their gamma 2.2 display with the encoded values implicitly assuming gamma 2.2 decoding, and because the sRGB piecewise curve produces more light below the mid-tones than gamma 2.2, manifesting as elevated shadows, reduced contrast, and a loss of atmospheric depth when sRGB-decoded content mastered for gamma 2.2 reaches the eye.
+
+The visual discrepancy is not subtle: consider the example cited in Dylan Raga's original research, Diablo IV, a game celebrated for its dark, gritty aesthetic in SDR mode that appears washed out in HDR mode, its rich blacks turning to dull grays, its atmosphere becoming hazy—a ruination caused not by the game's HDR implementation but by Windows' SDR-in-HDR translation layer.[^4]
+
+### 2.4 Quantifying the Difference
+
+The discrepancy admits precise quantification when we plot the luminance output for identical input values under sRGB versus gamma 2.2:
+
+| Input Code Value | sRGB Linear Output | Gamma 2.2 Linear Output | Difference |
+|------------------|-------------------|------------------------|------------|
+| 0.10 | 0.0100 | 0.0063 | +58.7% |
+| 0.20 | 0.0331 | 0.0217 | +52.5% |
+| 0.30 | 0.0732 | 0.0545 | +34.3% |
+| 0.40 | 0.1329 | 0.1113 | +19.4% |
+| 0.50 | 0.2140 | 0.1972 | +8.5% |
+
+The sRGB curve produces significantly more light in the shadow and lower mid-tone regions—a discrepancy exceeding 50% at the 10% input level that constitutes the mathematical origin of the washed-out appearance, diminishing as values approach the mid-tones and converging to near-zero above the 50% threshold where the curves effectively coincide.
+
+---
+
+## 3. Mathematical Foundations
+
+Correcting the transfer function mismatch requires operating within the HDR signal path itself, which in turn requires understanding three distinct transfer functions and their inverses: the gamma power law that governs legacy SDR displays, the piecewise sRGB formulation that Windows assumes, and the ST.2084 Perceptual Quantizer that encodes HDR signals for transmission and display.
+
+### 3.1 The Gamma Power Law
+
+The simplest transfer function relates signal to light via a single exponent:
+
+**EOTF (Electro-Optical Transfer Function):**
+$$L = V^\gamma$$
+
+**Inverse EOTF (OETF - Opto-Electronic Transfer Function):**
+$$V = L^{1/\gamma}$$
+
+Where:
+- *L* = Relative linear luminance [0, 1]
+- *V* = Signal value [0, 1]
+- *γ* = Gamma exponent (2.2 for general PC use, 2.4 for dark room viewing per BT.1886)
+
+### 3.2 The sRGB Piecewise EOTF
+
+As introduced above, sRGB defines a piecewise function:
+
+**EOTF:**
+$$
+L = \begin{cases}
+V / 12.92 & \text{if } V \leq 0.04045 \\
+\left(\frac{V + 0.055}{1.055}\right)^{2.4} & \text{if } V > 0.04045
+\end{cases}
+$$
+
+**Inverse EOTF:**
+$$
+V = \begin{cases}
+12.92 \times L & \text{if } L \leq 0.0031308 \\
+1.055 \times L^{1/2.4} - 0.055 & \text{if } L > 0.0031308
+\end{cases}
+$$
+
+The threshold 0.04045 (signal domain) corresponds to 0.0031308 (linear domain) at the junction point of the two segments.
+
+### 3.3 The ST.2084 PQ Transfer Function
+
+The Perceptual Quantizer (PQ) defined in SMPTE ST.2084 and adopted by HDR10 is fundamentally different from gamma-based functions. Rather than modeling CRT physics, PQ is designed to match **human perceptual response** to luminance, enabling efficient encoding across the full 0–10,000 nit range of HDR.[^5]
+
+**PQ EOTF (Signal → Nits):**
+
+$$L = 10000 \times \left( \frac{\max(V^{1/m_2} - c_1, 0)}{c_2 - c_3 \times V^{1/m_2}} \right)^{1/m_1}$$
+
+**PQ Inverse EOTF (Nits → Signal):**
+
+$$V = \left( \frac{c_1 + c_2 \times (L/10000)^{m_1}}{1 + c_3 \times (L/10000)^{m_1}} \right)^{m_2}$$
+
+Where the constants are defined as:
+
+| Constant | Fractional Form | Decimal Value |
+|----------|-----------------|---------------|
+| m₁ | 2610/4096/4 | 0.1593017578125 |
+| m₂ | 2523/4096 × 128 | 78.84375 |
+| c₁ | 3424/4096 | 0.8359375 |
+| c₂ | 2413/4096 × 32 | 18.8515625 |
+| c₃ | 2392/4096 × 32 | 18.6875 |
+
+These constants derive from the Barten model of human contrast sensitivity, tuned to produce approximately uniform perceptual steps across 12 bits of precision over the 10,000 nit range.[^6]
+
+What distinguishes PQ from gamma-based functions is its operation in **absolute luminance**—nits, candelas per square meter—rather than relative luminance, so that a PQ signal value corresponds to a specific physical light level regardless of the display's peak brightness, making PQ the lingua franca of HDR signal processing and the domain in which our correction must ultimately operate.
+
+---
+
+## 4. The Transformation Pipeline
+
+### 4.1 The Problem in Signal-Domain Terms
+
+Windows' SDR-in-HDR pipeline receives SDR content assumed to be sRGB-encoded, applies the sRGB EOTF to produce linear light relative to the SDR white level, scales that linear light to absolute nits according to the SDR Content Brightness setting, applies the PQ inverse EOTF to produce the HDR signal, and composites the result into the HDR10 output—a chain in which the error occurs at the sRGB EOTF step, where content mastered for gamma 2.2 decoding encounters Windows' sRGB decoder and emerges with its shadows lifted and its contrast reduced.
+
+### 4.2 The Correction Algorithm
+
+To correct this, we intercept the PQ signal and apply a LUT that effectively replaces sRGB decoding with gamma decoding:
+
+```
+For each PQ code value index i in [0, 1023]:
+    
+    normalized = i / 1023
+    
+    # Step 1: Decode PQ to get the linear nits Windows produced
+    linear_nits = PQ_EOTF(normalized)
+    
+    # Step 2: If above SDR white level, we're in HDR headroom - handle separately
+    if linear_nits > sdr_white_level:
+        # See Section 5: HDR Headroom Preservation
+        continue
+    
+    # Step 3: Undo Windows' sRGB assumption
+    # Windows assumed: signal → sRGB EOTF → linear_nits_intended
+    # So we reverse: linear_nits → sRGB Inverse EOTF → original_signal
+    signal_reconstructed = sRGB_InverseEOTF(linear_nits / sdr_white_level)
+    
+    # Step 4: Apply correct gamma decoding
+    # Now decode as the content was actually mastered: signal^γ → linear_intended
+    linear_intended = signal_reconstructed^γ
+    
+    # Step 5: Scale back to absolute nits
+    output_nits = black_level + (sdr_white_level - black_level) × linear_intended
+    
+    # Step 6: Encode back to PQ for the display
+    output_signal = PQ_InverseEOTF(output_nits)
+    
+    LUT[i] = output_signal
+```
+
+The essential operation is a remapping that "undoes" the sRGB decoding and "redoes" it as gamma 2.2 (or 2.4), all while preserving the absolute luminance scaling and PQ encoding expected by the HDR display.
+
+### 4.3 The SDR White Level Parameter
+
+The transformation depends critically on knowing the SDR white level—the luminance at which Windows renders SDR code value 1.0. This is controlled by the **"SDR Content Brightness"** slider in Windows Display settings and varies from 80 to 480 nits:
+
+| Slider Position | SDR White Level |
+|-----------------|-----------------|
+| 0 | 80 nits |
+| 5 | 100 nits |
+| 30 | 200 nits |
+| 55 | 300 nits |
+| 80 | 400 nits |
+| 100 | 480 nits |
+
+The formula is approximately: **White Level = 80 + (Slider × 4) nits**
+
+If the tool assumes a different white level than Windows is actually using, the correction will be miscalibrated—either crushing shadows (if assumed white level is too low) or elevating them (if too high). This parameter is therefore exposed in the user interface and should match the user's Windows setting.
+
+---
+
+## 5. HDR Headroom Preservation
+
+### 5.1 The Headroom Problem
+
+HDR's defining feature, its expansion of the luminance range, creates a complication for any correction operating in the SDR region: while SDR content occupies roughly 80–480 nits depending on the brightness setting, HDR content can utilize the full range up to the display's peak luminance, commonly 1,000–4,000 nits for modern HDR displays, and some SDR applications exploit this headroom by sending specular highlights and UI elements above the nominal SDR white level, particularly games that use the HDR headroom for bright effects even when rendering ostensibly SDR content.
+
+Blindly applying the gamma correction across the entire signal range would darken these HDR highlights inappropriately—what was intended as a 700-nit specularity would emerge crushed according to the same shadow-adjustment curve designed for the 0–200 nit range, destroying the very highlights that HDR was meant to liberate.
+
+### 5.2 The Shoulder Blend
+
+The correction therefore employs a **smooth blend** from the corrected curve to an identity passthrough as luminance increases above the SDR white level:
+
+$$
+\text{blend\_factor} = \min\left(1, \frac{L - W_{SDR}}{L_{max} - W_{SDR}}\right)
+$$
+
+Where:
+- *L* = Linear luminance in nits
+- *W_{SDR}* = SDR white level
+- *L_{max}* = Maximum HDR luminance (10,000 nits for PQ)
+
+The final output becomes:
+
+$$
+\text{output} = \text{corrected} + (\text{passthrough} - \text{corrected}) \times \text{blend\_factor}
+$$
+
+This produces a gradual transition: at exactly the SDR white level, the full correction is applied; as luminance increases, the correction fades toward unity; at 10,000 nits, the output equals the input unchanged.
+
+The mathematical beauty of this approach is that it creates a smooth, monotonic LUT without discontinuities, while respecting the creative intent of both SDR (corrected) and HDR (preserved) content.
+
+---
+
+Beyond the core gamma correction, the HDR Gamma Controller provides calibration adjustments—color temperature, tint, brightness—for fine-tuning the display to the user's environment and preferences, adjustments that operate throughout on a philosophy of perceptual accuracy over mathematical simplicity.
+
+### 6.1 Operating in Linear Light Space
+
+All color adjustments are applied after decoding to linear light and before re-encoding, a constraint essential for perceptual accuracy because operations like scaling, color mixing, and temperature adjustment are meaningful only in linear space where physical mixing of light occurs; applying a color temperature shift in gamma-encoded space produces incorrect results because the encoding curve compresses different luminance regions non-uniformly, breaking the proportional relationships that temperature adjustment assumes.
+
+### 6.2 Color Temperature
+
+Color temperature describes the chromaticity of a light source in relation to the Planckian locus—the curve in CIE color space traced by an ideal blackbody radiator as its temperature varies from red-hot (low Kelvin) through white-hot to blue-white (high Kelvin).[^7]
+
+Human circadian rhythm is entrained to the color temperature of natural light, which shifts from the warm ~2700K of candlelight and sunset through the neutral ~5500K of midday sun to the cool ~7500K of overcast sky and twilight. Night mode features that reduce blue light exposure are based on shifting the display toward warmer temperatures.
+
+#### Tanner Helland's Approximation
+
+For computational efficiency, the controller implements Tanner Helland's widely-used approximation of blackbody RGB values,[^8] which provides a visually pleasing, if mathematically simplified, representation of color temperature.
+
+#### CIE 1931 Accurate Method
+
+For users demanding higher fidelity, the controller also implements a physically accurate conversion based on the CIE 1931 color space. This algorithm calculates the chromaticity coordinates (x, y) for a given Kelvin temperature, transforms them into the XYZ color space, and finally projects them into linear sRGB. This method ensures that the white point shifts precisely along the Planckian locus, preserving the exact chromaticity relationships defined by the laws of physics.
+
+For temperature *T* in Kelvin:
+
+**Red channel:**
+$$
+R = \begin{cases}
+255 & \text{if } T \leq 6600 \\
+329.698727446 \times (T/100 - 60)^{-0.1332047592} & \text{if } T > 6600
+\end{cases}
+$$
+
+**Green channel:**
+$$
+G = \begin{cases}
+99.4708025861 \times \ln(T/100) - 161.1195681661 & \text{if } T \leq 6600 \\
+288.1221695283 \times (T/100 - 60)^{-0.0755148492} & \text{if } T > 6600
+\end{cases}
+$$
+
+**Blue channel:**
+$$
+B = \begin{cases}
+0 & \text{if } T \leq 1900 \\
+138.5177312231 \times \ln(T/100 - 10) - 305.0447927307 & \text{if } T < 6600 \\
+255 & \text{if } T \geq 6600
+\end{cases}
+$$
+
+The resulting RGB values are normalized and applied as per-channel multipliers in linear space.
+
+#### Temperature Offset for Night Mode
+
+Rather than specifying an absolute temperature, night mode operates via a **temperature offset** from the base 6500K neutral. A -1500K offset shifts toward warmer 5000K; a +500K offset shifts toward cooler 7000K. This allows the night mode adjustment to layer on top of any existing color profile.
+
+### 6.3 Tint (Green/Magenta Axis)
+
+Color temperature adjustments move along the Planckian locus (blue ↔ orange axis). However, many displays and environments require adjustment along the **orthogonal** green/magenta axis—the tint control familiar from video color correction.
+
+Tint adjustment is implemented as a differential scaling of the green channel relative to red and blue:
+
+For tint value *τ* in range [-100, 100]:
+
+$$
+M_G = 1.0 + 0.002 \times |\tau|
+$$
+$$
+M_{RB} = 1.0 - 0.001 \times |\tau|
+$$
+
+If *τ* > 0 (green tint): multiply G by *M_G*, multiply R and B by *M_{RB}*
+
+If *τ* < 0 (magenta tint): multiply R and B by *M_G*, multiply G by *M_{RB}*
+
+This produces approximately ±20% green/magenta shift at the extremes while maintaining luminance.
+
+### 6.4 Dimming
+
+Reducing display brightness proves less straightforward than multiplying all values by a scaling factor would suggest, for linear dimming—while mathematically obvious—crushes shadows before highlights are meaningfully reduced, violating the perceptual uniformity that a useful dimming function should preserve.
+
+Human brightness perception follows an approximate power law described by Stevens with exponent ~0.5 for luminance,[^9] and to maintain perceptual contrast across the tonal range while dimming, the controller employs **perceptual dimming**:
+
+$$
+L_{dimmed} = L_{original}^{(1/k)}
+$$
+
+Where *k* derives from the brightness percentage:
+
+$$
+k = \left(\frac{\text{brightness}}{100}\right)^{0.5}
+$$
+
+This power-law compression reduces overall brightness while preserving shadow separation, instantiating the same principle that underlies exposure sliders in photo editing software.
+
+### 6.5 Order of Operations
+
+The calibration pipeline applies adjustments in a specific order:
+
+1. **Dimming** — Reduces overall luminance
+2. **Temperature** — Shifts white point along Planckian locus
+3. **Tint** — Shifts white point orthogonal to Planckian locus
+4. **RGB Gain** — Per-channel multiplier (1.0 = unity)
+5. **RGB Offset** — Per-channel addition (0.0 = none)
+
+This order ensures that creative adjustments (temperature, tint) operate on the dimmed luminance range, and low-level calibration (RGB gain/offset) can correct for display non-uniformities independent of the artistic intent.
+
+### 6.6 Integrated Night Shift
+
+A persistent challenge in Windows color management is the conflict between hardware gamma tables (VCGT) and the system's native Night Light feature. When an external tool writes a correction to the VCGT, it often overrides or gets overridden by Windows Night Light, leading to a flickering battle for control or the complete disablement of the warming effect just when it is needed.
+
+The HDR Gamma Controller solves this by **integrating Night Shift directly into the correction pipeline**. Rather than relying on Windows to apply a toggleable overlay, the application calculates the sun's position based on the user's geolocation, determines the appropriate color temperature shift, and *bakes it mathematically into the gamma LUTs* before they are ever sent to the display.
+
+This approach offers two profound advantages: first, it eliminates the resource contention for the VCGT, ensuring that the gamma correction and the night mode warming coexist in perfect harmony; second, it applies the warming effect in high-precision floating-point space *before* quantization, resulting in a smoother, band-free transition that maintains the integrity of the shadow details even as the screen warms to a deep amber.
+
+---
+
+## 7. Implementation Architecture
+
+### 7.1 LUT Structure
+
+The correction takes the form of a 1024-point 1D Look-Up Table, a resolution derived from the Windows MHC2 (Monitor Hardware Calibration) profile format which specifies precisely 1024 entries for its calibration LUT and maps input PQ signal values to output PQ signal values:
+
+$$
+\text{LUT} : [0, 1023] \rightarrow [0.0, 1.0]
+$$
+
+For calibration adjustments that affect color channels differently (temperature, tint, RGB gain), **per-channel LUTs** are generated:
+
+- **LUT_R[1024]** — Red channel transform
+- **LUT_G[1024]** — Green channel transform
+- **LUT_B[1024]** — Blue channel transform
+- **LUT_Grey[1024]** — Reference (average of R, G, B)
+
+### 7.2 Application Methods
+
+The controller applies these generated LUTs to the display using the **ArgyllCMS `dispwin` utility**, a robust industry-standard tool for color management.
+
+#### Direct Hardware Loading
+
+The application leverages `dispwin` to load the 1024-point 1D LUT directly into the video card's hardware gamma ramp (VCGT - Video Card Gamma Table). This method is:
+
+- **Fast**: Updates can be applied near-instantly, allowing for real-time preview of calibration limits.
+- **Universal**: Works across most GPU vendors and driver versions.
+- **Precise**: Bypasses the Windows compositor's color management quirks by speaking directly to the hardware driver.
+
+While VCGT loading is sometimes criticized for its volatility—it can be reset by system events or fullscreen exclusive games—the HDR Gamma Controller mitigates this by monitoring the system state and reapplying the profile automatically when necessary, ensuring that the correction remains persistent and stable without requiring user intervention.
+
+### 7.3 SDR vs. HDR Processing Paths
+
+For SDR displays—those without HDR enabled—the transformation pipeline simplifies considerably, decoding input as gamma 2.2 to linear, applying calibration adjustments in linear space, and encoding output as gamma 2.2 back to signal, with no PQ involvement whatsoever because SDR displays expect no such encoding; the calibration adjustments themselves—temperature, tint, dimming—apply identically in both cases, differing only in the encode/decode stages that bracket them.
+
+---
+
+## 8. Windows HDR Pipeline Context
+
+### 8.1 The Desktop Window Manager (DWM)
+
+All visual output in modern Windows flows through the Desktop Window Manager, the compositor responsible for rendering the desktop, windows, and effects, and when HDR is enabled, DWM operates in a **linear scRGB composition space** (Canonical Composition Color Space). This space uses BT.709 primaries but allows for unbounded floating-point values (far exceeding 1.0) to represent high dynamic range and wide color gamut data, converting the traditional sRGB surfaces of SDR applications into this linear space before final output to the display's native format (typically HDR10/BT.2020).
+
+### 8.2 Where LUTs Are Applied
+
+Color transforms apply in a hierarchy: application rendering first (sRGB for SDR apps, scRGB or HDR10 for HDR apps), then DWM conversion from SDR to HDR10 using the sRGB EOTF and SDR white level, and finally the display driver's VCGT gamma ramp where our correction resides.
+
+By injecting the correction at the driver level (VCGT), we effectively intercept the signal *after* the Windows compositor has done its damage but *before* it leaves the GPU, allowing us to untwist the distorted tone curve and restore linearity just before the photons are emitted. The integrated Night Shift ensures that this VCGT injection handles both the gamma correction and the circadian warming in a single, unified mathematical pass.
+
+### 8.3 Night Light Interaction
+
+Because Windows' native Night Light applies its filter at the compositor level, it would normally stack with or be overridden by VCGT loading. However, by disabling the system's Night Light and relying on the controller's **Integrated Night Shift**, we avoid this conflict entirely. The application takes responsibility for the circadian adjustment, rendering the system's native toggle redundant and ensuring a conflict-free color pipeline provided the native feature is disabled.
+
+---
+
+## 9. Verification and Accuracy
+
+### 9.1 Mathematical Validation
+
+The LUT generation algorithm was validated against the reference implementation from Dylan Raga's original project, with the JavaScript implementation using identical transfer function constants and producing bitwise-comparable output when controlled for floating-point precision differences, all calculations employing **double precision** (64-bit IEEE 754) and specifying the ST.2084 constants to 14 decimal places to avoid accumulated rounding error across the 1024-point LUT.
+
+### 9.2 Visual Verification
+
+Correct gamma application manifests visually as rich, defined shadows rather than elevated hazy gray; strong separation between light and dark elements; proper rendering of fog, darkness, and volumetric lighting; and richer color saturation, since elevated shadows desaturate the image. A/B comparison with the tool enabled and disabled on dark content—games, films—reveals the difference immediately to any attentive observer.
+
+### 9.3 Common Failure Modes
+
+| Symptom | Likely Cause |
+|---------|--------------|
+| Image appears too dark | SDR white level set higher than Windows setting |
+| Shadows appear crushed | SDR white level set lower than Windows setting |
+| No visible change | LUT failed to apply; check driver compatibility |
+| Colors appear tinted | Calibration settings inadvertently modified |
+
+---
+
+## 10. Acknowledgements
+
+This work builds directly on the research and implementation of **Dylan Raga** ([dylanraga/win11hdr-srgb-to-gamma2.2-icm](https://github.com/dylanraga/win11hdr-srgb-to-gamma2.2-icm)), whose identification of the Windows SDR-in-HDR transfer function problem and creation of the original LUT generator laid the foundation for this project.
+
+Additional acknowledgements:
+
+- **ArgyllCMS** by Graeme Gill — The `dispwin` utility enables low-level LUT loading for testing and validation
+- **MHC2Gen** by dantmnf — Reference for the MHC2 ICC profile format
+- **Microsoft** — Documentation on Advanced Color and HDR color management APIs
+
+---
+
+## 11. References
+
+[^1]: Poynton, C. (2003). *Digital Video and HDTV: Algorithms and Interfaces*. Morgan Kaufmann. Chapter on gamma and transfer functions.
+
+[^2]: IEC 61966-2-1:1999. *Multimedia systems and equipment - Colour measurement and management - Part 2-1: Colour management - Default RGB colour space - sRGB*.
+
+[^3]: Stokes, M., Anderson, M., Chandrasekar, S., & Motta, R. (1996). *A Standard Default Color Space for the Internet - sRGB*. Hewlett-Packard / Microsoft.
+
+[^4]: Raga, D. (2023). *win11hdr-srgb-to-gamma2.2-icm*. GitHub repository. Retrieved from https://github.com/dylanraga/win11hdr-srgb-to-gamma2.2-icm
+
+[^5]: SMPTE ST 2084:2014. *High Dynamic Range Electro-Optical Transfer Function of Mastering Reference Displays*.
+
+[^6]: Miller, S., Nezamabadi, M., & Daly, S. (2013). *Perceptual Signal Coding for More Efficient Usage of Bit Codes*. SMPTE Motion Imaging Journal, 122(4), 52-59.
+
+[^7]: Wyszecki, G., & Stiles, W. S. (2000). *Color Science: Concepts and Methods, Quantitative Data and Formulae* (2nd ed.). Wiley-Interscience.
+
+[^8]: Helland, T. (2012). *How to Convert Temperature (K) to RGB: Algorithm and Sample Code*. Retrieved from https://tannerhelland.com/2012/09/18/convert-temperature-rgb-algorithm-code.html
+
+[^9]: Stevens, S. S. (1957). On the psychophysical law. *Psychological Review*, 64(3), 153-181.
+
+---
+
+*Last updated: January 2026*

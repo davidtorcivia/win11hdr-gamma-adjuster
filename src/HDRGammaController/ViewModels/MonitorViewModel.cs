@@ -70,8 +70,12 @@ namespace HDRGammaController.ViewModels
             }
             else
             {
-                // HDR not active - gamma correction not applicable
-                SubItems.Add(new ActionViewModel("(HDR not active)", null));
+                // HDR not active - show SDR info and settings
+                SubItems.Add(new ActionViewModel("(SDR Display)", null));
+                 
+                // Add settings option
+                SubItems.Add(new ActionViewModel("───────────", null));
+                SubItems.Add(new ActionViewModel("⚙ Settings...", new RelayCommand(_ => OpenSettings())));
             }
         }
         
