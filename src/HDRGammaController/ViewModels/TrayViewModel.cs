@@ -182,12 +182,13 @@ namespace HDRGammaController.ViewModels
             RefreshMonitors();
         }
         
-        public void RequestApply(MonitorInfo monitor, GammaMode mode, CalibrationSettings? manualCalibration = null)
+        public void RequestApply(MonitorInfo monitor, GammaMode mode, CalibrationSettings? manualCalibration = null, int? nightKelvinOverride = null)
         {
-             // Use service's blend factor
-            double blend = _nightModeService.CurrentBlend;
-            if (_nightModeManuallyDisabled) blend = 0.0;
-            bool nightModeActive = blend > 0.001;
+             // Use override if provided (during drag preview), else service's kelvin
+            int currentKelvin = nightKelvinOverride ?? _nightModeService.CurrentNightKelvin;
+            if (_nightModeManuallyDisabled) currentKelvin = 6500;
+            // Force active if override provided (to ensure preview works even if service is at 6500)
+            bool nightModeActive = nightKelvinOverride.HasValue || currentKelvin < 6450;
             
             try 
             { 
@@ -214,20 +215,11 @@ namespace HDRGammaController.ViewModels
                 // Apply night mode temperature if active
                 if (nightModeActive)
                 {
-                    var nightMode = _settingsManager.NightMode;
-                    
                     // Calculate night mode shift (-50 to +50 scale)
-                    double nightShift = (nightMode.TemperatureKelvin - 6500) / 70.0;
+                    double nightShift = (currentKelvin - 6500) / 70.0;
+                    calibration.Temperature += nightShift;
                     
-                    // Blend the shift
-                    double blendedShift = nightShift * blend;
-                    
-                    calibration.Temperature += blendedShift;
-                    
-                    if (blend > 0.5)
-                    {
-                        calibration.Algorithm = nightMode.Algorithm;
-                    }
+                    calibration.Algorithm = _settingsManager.NightMode.Algorithm;
                 }
                 
                 calibration.Temperature = Math.Clamp(calibration.Temperature, -50.0, 50.0);
@@ -252,9 +244,9 @@ namespace HDRGammaController.ViewModels
 
         private void ApplyAll()
         {
-            double blend = _nightModeService.CurrentBlend;
-            if (_nightModeManuallyDisabled) blend = 0.0;
-            bool nightModeActive = blend > 0.001;
+            int currentKelvin = _nightModeService.CurrentNightKelvin;
+            if (_nightModeManuallyDisabled) currentKelvin = 6500;
+            bool nightModeActive = currentKelvin < 6450;
 
             foreach(var item in TrayItems)
             {

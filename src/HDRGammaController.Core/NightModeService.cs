@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Timers;
 
 namespace HDRGammaController.Core
@@ -63,6 +64,39 @@ namespace HDRGammaController.Core
         /// </summary>
         public int FadeMinutes { get; set; } = 30;
         
+        public List<NightModeSchedulePoint> Schedule { get; set; } = new List<NightModeSchedulePoint>();
+
+        public void EnsureSchedule(double? lat, double? lon)
+        {
+            if (Schedule != null && Schedule.Count > 0) return;
+            
+            // Migrate legacy settings to schedule
+            Schedule = new List<NightModeSchedulePoint>();
+            
+            // Point 1: At StartTime (or Sunset), fade to Night Temp
+            var startPoint = new NightModeSchedulePoint
+            {
+                TriggerType = UseAutoSchedule ? ScheduleTriggerType.Sunset : ScheduleTriggerType.FixedTime,
+                Time = StartTime,
+                OffsetMinutes = 0,
+                TargetKelvin = TemperatureKelvin,
+                FadeMinutes = FadeMinutes
+            };
+            
+            // Point 2: At EndTime (or Sunrise), fade to Daylight (6500K)
+            var endPoint = new NightModeSchedulePoint
+            {
+                TriggerType = UseAutoSchedule ? ScheduleTriggerType.Sunrise : ScheduleTriggerType.FixedTime,
+                Time = EndTime,
+                OffsetMinutes = 0,
+                TargetKelvin = 6500, // Daylight
+                FadeMinutes = FadeMinutes
+            };
+            
+            Schedule.Add(startPoint);
+            Schedule.Add(endPoint);
+        }
+        
         /// <summary>
         /// Gets effective start/end times, using sunrise/sunset if auto mode enabled.
         /// </summary>
@@ -98,8 +132,10 @@ namespace HDRGammaController.Core
         /// </summary>
         public event Action<CalibrationSettings>? ApplyAdjustments;
         
-        public double CurrentBlend => _currentBlend;
-        public bool IsNightModeActive => _currentBlend > 0.01;
+        public int CurrentNightKelvin => _currentNightKelvin;
+        public bool IsNightModeActive => _currentNightKelvin < 6450;
+        
+        private int _currentNightKelvin = 6500;
         
         public NightModeService(NightModeSettings settings)
         {
@@ -124,7 +160,7 @@ namespace HDRGammaController.Core
             else
             {
                 // Force an update to catch new times/durations immediately
-                UpdateBlend(); 
+                UpdateState(); 
                 ScheduleNextTick();
             }
         }
@@ -132,7 +168,7 @@ namespace HDRGammaController.Core
         public void Start()
         {
             if (!_settings.Enabled) return;
-            UpdateBlend();
+            UpdateState();
             ScheduleNextTick();
         }
         
@@ -143,7 +179,7 @@ namespace HDRGammaController.Core
 
         private void OnTimerElapsed(object? sender, ElapsedEventArgs e)
         {
-            UpdateBlend();
+            UpdateState();
             ScheduleNextTick();
         }
 
@@ -151,160 +187,145 @@ namespace HDRGammaController.Core
         {
             if (!_settings.Enabled) return;
 
-            var now = DateTime.Now.TimeOfDay;
-            bool isFading = IsInAnyFadeWindow(now);
-
-            double intervalMs = 30000; // Default stable interval (30s)
-
-            if (isFading)
-            {
-                // Dynamic Interval Logic:
-                // We want to be "imperceptibly smooth".
-                // Target 100 steps for the entire transition.
-                // For 30 mins (1800s): 1800/100 = 18s interval.
-                // Delta per step approx 38K (invisible).
-                
-                double fadeDurationSeconds = _settings.FadeMinutes * 60.0;
-                double targetIntervalSeconds = fadeDurationSeconds / 100.0;
-                
-                // Clamp: Never faster than 4s (performance), never slower than 30s (responsiveness)
-                intervalMs = Math.Clamp(targetIntervalSeconds * 1000, 4000, 30000);
-            }
-            
-            _timer.Interval = intervalMs;
+            // Simple logic: update frequently (4s) to ensure smooth transitions
+            // Optimization for the future: calculate time to next transition event
+            // For now, consistent updates ensure responsiveness to schedule changes
+            _timer.Interval = 4000;
             _timer.Start();
         }
         
-        private bool IsInAnyFadeWindow(TimeSpan now)
-        {
-            if (_settings.FadeMinutes <= 0) return false;
-
-            var (startTime, endTime) = _settings.GetEffectiveTimes();
-            var fadeDuration = TimeSpan.FromMinutes(_settings.FadeMinutes);
-
-            // Fade In Window (Start - Fade to Start)
-            var fadeInStart = startTime - fadeDuration;
-            if (fadeInStart < TimeSpan.Zero) fadeInStart += TimeSpan.FromHours(24);
-            if (IsInFadeRange(now, fadeInStart, startTime)) return true;
-
-            // Fade Out Window (End to End + Fade)
-            var fadeOutEnd = endTime + fadeDuration;
-            if (fadeOutEnd > TimeSpan.FromHours(24)) fadeOutEnd -= TimeSpan.FromHours(24);
-            if (IsInFadeRange(now, endTime, fadeOutEnd)) return true;
-
-            return false;
-        }
-        
-        private void UpdateBlend()
+        private void UpdateState()
         {
             if (!_settings.Enabled)
             {
-                if (_currentBlend > 0)
+                if (_currentNightKelvin != 6500)
                 {
-                    _currentBlend = 0;
-                    BlendChanged?.Invoke(_currentBlend);
+                    _currentNightKelvin = 6500;
+                    BlendChanged?.Invoke(0); // Legacy blend support (0=Day)
                     ApplyCurrentAdjustments();
                 }
                 return;
             }
             
-            var now = DateTime.Now.TimeOfDay;
-            double targetBlend = IsInNightPeriod(now) ? 1.0 : 0.0;
+            _settings.EnsureSchedule(_settings.Latitude, _settings.Longitude);
             
-            // Handle fade transitions
-            if (_settings.FadeMinutes > 0)
-            {
-                targetBlend = CalculateFadeBlend(now);
-            }
+            int targetKelvin = CalculateCurrentKelvin();
             
             // Only update if changed significantly
-            if (Math.Abs(targetBlend - _currentBlend) > 0.01)
+            if (Math.Abs(targetKelvin - _currentNightKelvin) > 5)
             {
-                _currentBlend = targetBlend;
-                BlendChanged?.Invoke(_currentBlend);
+                _currentNightKelvin = targetKelvin;
+                BlendChanged?.Invoke(1.0); // Signal update
                 ApplyCurrentAdjustments();
             }
         }
         
-        private bool IsInNightPeriod(TimeSpan now)
+        private int CalculateCurrentKelvin()
         {
-            // Get effective times (handles auto sunrise/sunset mode)
-            var (startTime, endTime) = _settings.GetEffectiveTimes();
+            var now = DateTime.Now;
+            var timeOfDay = now.TimeOfDay;
             
-            // Handle overnight periods (e.g., sunset 17:00 to sunrise 07:00)
-            if (startTime > endTime)
+            // 1. Resolve all points to absolute TimeSpans for today
+            var points = _settings.Schedule;
+            if (points == null || points.Count == 0) return 6500;
+
+            // Sort points by resolved time
+            var resolvedPoints = new List<(TimeSpan Time, NightModeSchedulePoint Point)>();
+            foreach (var p in points)
             {
-                // Night period spans midnight
-                return now >= startTime || now <= endTime;
+                resolvedPoints.Add((p.GetTimeOfDay(_settings.Latitude, _settings.Longitude), p));
+            }
+            resolvedPoints.Sort((a, b) => a.Time.CompareTo(b.Time));
+            
+            // 2. Find the last point that occurred (Time <= Now)
+            int currentIndex = -1;
+            for (int i = 0; i < resolvedPoints.Count; i++)
+            {
+                if (resolvedPoints[i].Time <= timeOfDay)
+                {
+                    currentIndex = i;
+                }
+            }
+            
+            // 3. Identify Current Point and Previous Point
+            // If current is -1, we are in the early morning before the first point of the day.
+            // Our "current state" is determined by the LAST point of Yesterday.
+            
+            (TimeSpan Time, NightModeSchedulePoint Point) currentContext;
+            (TimeSpan Time, NightModeSchedulePoint Point) previousContext;
+            
+            if (currentIndex == -1)
+            {
+                // Current context is the last point of the list (acting as yesterday's end)
+                // Its trigger time was yesterday.
+                var last = resolvedPoints[resolvedPoints.Count - 1];
+                currentContext = (last.Time - TimeSpan.FromHours(24), last.Point);
+                
+                // Prev would be the one before that
+                var prev = resolvedPoints.Count > 1 ? resolvedPoints[resolvedPoints.Count - 2] : last;
+                if (resolvedPoints.Count > 1) 
+                     previousContext = (prev.Time - TimeSpan.FromHours(24), prev.Point);
+                else previousContext = (prev.Time - TimeSpan.FromHours(48), prev.Point); // Edge case 1 point
             }
             else
             {
-                // Normal period within same day
-                return now >= startTime && now <= endTime;
+                currentContext = resolvedPoints[currentIndex];
+                
+                // Previous is index - 1. If index is 0, it's the last point of Yesterday.
+                if (currentIndex > 0)
+                {
+                    previousContext = resolvedPoints[currentIndex - 1];
+                }
+                else
+                {
+                    var last = resolvedPoints[resolvedPoints.Count - 1];
+                    previousContext = (last.Time - TimeSpan.FromHours(24), last.Point);
+                }
             }
-        }
-        
-        private double CalculateFadeBlend(TimeSpan now)
-        {
-            var (startTime, endTime) = _settings.GetEffectiveTimes();
-            var fadeDuration = TimeSpan.FromMinutes(_settings.FadeMinutes);
             
-            // Fade in: StartTime - fadeMinutes to StartTime
-            var fadeInStart = startTime - fadeDuration;
-            if (fadeInStart < TimeSpan.Zero) fadeInStart += TimeSpan.FromHours(24);
+            // 4. Calculate Interpolation
+            // Transition is: From PreviousTarget -> CurrentTarget
+            // Triggered at: CurrentContext.Time
+            // Duration: CurrentContext.Point.FadeMinutes
             
-            // Fade out: EndTime to EndTime + fadeMinutes
-            var fadeOutEnd = endTime + fadeDuration;
-            if (fadeOutEnd > TimeSpan.FromHours(24)) fadeOutEnd -= TimeSpan.FromHours(24);
+            // Wait. My Logic earlier:
+            // "At 18:00 (Point A), we start fading TO Point A's target."  <- This effectively means Point A defines the transition start.
+            // Start Value = Target of (A-1). End Value = Target of A.
             
-            // Check if we're in fade-in period
-            if (IsInFadeRange(now, fadeInStart, startTime))
+            var targetPoint = currentContext.Point;
+            var startKelvin = previousContext.Point.TargetKelvin;
+            var endKelvin = targetPoint.TargetKelvin;
+            
+            // Check if we are inside the fade window
+            // Window starts at currentContext.Time
+            var timeSinceTrigger = timeOfDay - currentContext.Time;
+            if (timeSinceTrigger < TimeSpan.Zero) timeSinceTrigger += TimeSpan.FromHours(24); // Handle wrapping if needed logic mismatch
+            
+            // Only fade if we are within the duration
+            double fadeMinutes = targetPoint.FadeMinutes;
+            if (timeSinceTrigger.TotalMinutes < fadeMinutes && fadeMinutes > 0)
             {
-                double progress = GetFadeProgress(now, fadeInStart, startTime);
-                return progress;
+                double progress = timeSinceTrigger.TotalMinutes / fadeMinutes;
+                progress = Math.Clamp(progress, 0.0, 1.0);
+                
+                // Lerp
+                return (int)(startKelvin + (endKelvin - startKelvin) * progress);
             }
             
-            // Check if we're in full night mode
-            if (IsInNightPeriod(now))
-            {
-                return 1.0;
-            }
-            
-            // Check if we're in fade-out period
-            if (IsInFadeRange(now, endTime, fadeOutEnd))
-            {
-                double progress = GetFadeProgress(now, endTime, fadeOutEnd);
-                return 1.0 - progress;
-            }
-            
-            return 0.0;
+            // Otherwise we have arrived
+            return endKelvin;
         }
-        
-        private bool IsInFadeRange(TimeSpan now, TimeSpan start, TimeSpan end)
-        {
-            if (start > end)
-            {
-                return now >= start || now <= end;
-            }
-            return now >= start && now <= end;
-        }
-        
-        private double GetFadeProgress(TimeSpan now, TimeSpan start, TimeSpan end)
-        {
-            double totalMinutes = (end - start).TotalMinutes;
-            if (totalMinutes <= 0) return 1.0;
-            
-            double elapsedMinutes = (now - start).TotalMinutes;
-            if (elapsedMinutes < 0) elapsedMinutes += 24 * 60;
-            
-            return Math.Clamp(elapsedMinutes / totalMinutes, 0.0, 1.0);
-        }
-        
+
         private void ApplyCurrentAdjustments()
         {
+            // Convert Absolute Kelvin to relative Shift
+            // 6500K = 0 shift
+            // Base logic: Temp = (Kelvin - 6500) / 70
+            double tempShift = (_currentNightKelvin - 6500) / 70.0;
+            
             var calibration = new CalibrationSettings
             {
-                Temperature = _settings.Temperature * _currentBlend,
+                Temperature = tempShift,
                 Algorithm = _settings.Algorithm
             };
             ApplyAdjustments?.Invoke(calibration);

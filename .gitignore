@@ -11,6 +11,8 @@ obj/
 publish/
 publish-minimal/
 publish-small/
+dist/
+dist-minimal/
 
 # Logs
 startup_log.txt

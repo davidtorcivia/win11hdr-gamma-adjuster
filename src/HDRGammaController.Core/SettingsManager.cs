@@ -87,6 +87,8 @@ namespace HDRGammaController.Core
         public int FadeMinutes { get; set; } = 30;
         public NightModeAlgorithm Algorithm { get; set; } = NightModeAlgorithm.Standard;
         
+        public List<NightModeSchedulePoint> Schedule { get; set; } = new List<NightModeSchedulePoint>();
+        
         public NightModeSettings ToNightModeSettings() => new NightModeSettings
         {
             Enabled = Enabled,
@@ -97,7 +99,8 @@ namespace HDRGammaController.Core
             EndTime = TimeSpan.TryParse(EndTime, out var end) ? end : new TimeSpan(7, 0, 0),
             TemperatureKelvin = TemperatureKelvin,
             FadeMinutes = FadeMinutes,
-            Algorithm = Algorithm
+            Algorithm = Algorithm,
+            Schedule = Schedule ?? new List<NightModeSchedulePoint>()
         };
         
         public static NightModeSettingsData FromNightModeSettings(NightModeSettings settings) => new NightModeSettingsData
@@ -110,7 +113,8 @@ namespace HDRGammaController.Core
             EndTime = settings.EndTime.ToString(@"hh\:mm"),
             TemperatureKelvin = settings.TemperatureKelvin,
             FadeMinutes = settings.FadeMinutes,
-            Algorithm = settings.Algorithm
+            Algorithm = settings.Algorithm,
+            Schedule = settings.Schedule ?? new List<NightModeSchedulePoint>()
         };
     }
     
@@ -128,6 +132,12 @@ namespace HDRGammaController.Core
         public NightModeSettings NightMode => _data.NightMode.ToNightModeSettings();
         
         public event Action<NightModeSettings>? NightModeChanged;
+        
+        public void NotifyNightModeChanged(NightModeSettings? settings = null)
+        {
+            // Invoke with provided settings or current
+             NightModeChanged?.Invoke(settings ?? NightMode);
+        }
 
         public SettingsManager()
         {
