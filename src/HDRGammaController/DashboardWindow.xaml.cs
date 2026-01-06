@@ -14,13 +14,13 @@ namespace HDRGammaController
         private readonly MonitorManager _monitorManager;
         private readonly SettingsManager _settingsManager;
         private readonly NightModeService _nightModeService;
-        private readonly Action<MonitorInfo, GammaMode, CalibrationSettings> _applyCallback;
+        private readonly Action<MonitorInfo, GammaMode, CalibrationSettings?, int?> _applyCallback;
         
         public DashboardWindow(
             MonitorManager monitorManager, 
             SettingsManager settingsManager,
             NightModeService nightModeService,
-            Action<MonitorInfo, GammaMode, CalibrationSettings> applyCallback)
+            Action<MonitorInfo, GammaMode, CalibrationSettings?, int?> applyCallback)
         {
             InitializeComponent();
             _monitorManager = monitorManager;
@@ -40,10 +40,8 @@ namespace HDRGammaController
             var items = new List<DashboardItem>();
             
             // Night mode data
-            double blend = _nightModeService.CurrentBlend;
-            var nmSettings = _settingsManager.NightMode;
-            double nightShift = (nmSettings.TemperatureKelvin - 6500) / 70.0;
-            double blendedShift = nightShift * blend;
+            int nightKelvin = _nightModeService.CurrentNightKelvin;
+            double blendedShift = (nightKelvin - 6500) / 70.0;
             
             foreach (var m in monitors)
             {
@@ -67,7 +65,7 @@ namespace HDRGammaController
                 int kelvin = (int)(6500 + effectiveTemp * 70);
 
                 string tempText = $"{kelvin}K";
-                if (blend > 0.01) tempText += " (Night)";
+                if (_nightModeService.IsNightModeActive) tempText += " (Night)";
                 
                 items.Add(new DashboardItem
                 {
@@ -112,29 +110,40 @@ namespace HDRGammaController
 
         private void Configure_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is Button btn && btn.Tag is DashboardItem item)
+            try
             {
-                // Open SettingsWindow for this monitor
-                // We need to pass all monitors to it so the selector works
-                var allMonitors = (MonitorList.ItemsSource as List<DashboardItem>)?.Select(i => i.Model).ToList();
-                
-                var settingsWindow = new SettingsWindow(
-                    item.Model, 
-                    allMonitors ?? new List<MonitorInfo> { item.Model }, 
-                    _settingsManager, 
-                    (mon, mode, cal) => 
-                    {
-                        // Callback updates app state
-                        _applyCallback(mon, mode, cal);
-                        // Refresh dashboard to show new values
-                        RefreshMonitors();
-                    });
+                if (sender is Button btn && btn.Tag is DashboardItem item)
+                {
+                    // Open SettingsWindow for this monitor
+                    // We need to pass all monitors to it so the selector works
+                    var allMonitors = (MonitorList.ItemsSource as List<DashboardItem>)?.Select(i => i.Model).ToList();
                     
-                settingsWindow.Owner = this;
-                settingsWindow.ShowDialog();
-                
-                // Refresh after close in case they changed things
-                RefreshMonitors();
+                    var settingsWindow = new SettingsWindow(
+                        item.Model, 
+                        allMonitors ?? new List<MonitorInfo> { item.Model }, 
+                        _settingsManager, 
+                        (mon, mode, cal, nightOverride) => 
+                        {
+                            // Callback updates app state
+                            _applyCallback(mon, mode, cal, nightOverride);
+                            
+                            // Optimization: Skip heavyweight RefreshMonitors during drag previews (when nightOverride is set)
+                            if (!nightOverride.HasValue)
+                            {
+                                RefreshMonitors();
+                            }
+                        });
+                        
+                    settingsWindow.Owner = this;
+                    settingsWindow.ShowDialog();
+                    
+                    // Refresh after close in case they changed things
+                    RefreshMonitors();
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error opening settings: {ex.Message}\n\n{ex.StackTrace}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
     }

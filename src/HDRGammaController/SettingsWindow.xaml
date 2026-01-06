@@ -1,6 +1,7 @@
 <Window x:Class="HDRGammaController.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:HDRGammaController"
         Title="HDR Gamma Controller - Settings"
         Width="520" Height="750"
         MinWidth="500" MinHeight="600"
@@ -351,91 +352,8 @@
                                           Style="{StaticResource ModernToggle}"
                                           Checked="NightModeEnabled_Changed" Unchecked="NightModeEnabled_Changed"/>
                                 
-                                <StackPanel x:Name="NightModeOptions" Margin="0,12,0,0">
-                                    <!-- Auto Sunrise/Sunset Toggle -->
-                                    <CheckBox x:Name="UseAutoSchedule" Content="Use sunrise/sunset times" 
-                                              Style="{StaticResource ModernToggle}" Margin="0,0,0,8"
-                                              Checked="UseAutoSchedule_Changed" Unchecked="UseAutoSchedule_Changed"/>
-                                    
-                                    <!-- Location (for auto mode) -->
-                                    <StackPanel x:Name="LocationPanel" Margin="0,0,0,8">
-                                        <TextBlock Text="Location (lat, lon)" Style="{StaticResource FieldLabel}"/>
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
-                                            <TextBox x:Name="LatitudeBox" Grid.Column="0" Margin="0,0,4,0" Text=""/>
-                                            <TextBox x:Name="LongitudeBox" Grid.Column="1" Margin="4,0,4,0" Text=""/>
-                                            <Button Grid.Column="2" Content="Detect" Style="{StaticResource SecondaryButton}"
-                                                    Click="DetectLocation_Click" Padding="8,4"/>
-                                        </Grid>
-                                        <TextBlock x:Name="SunTimesDisplay" Text="" Foreground="{StaticResource TextDim}" 
-                                                   FontSize="11" Margin="0,4,0,0"/>
-                                    </StackPanel>
-                                    
-                                    <!-- Manual Times (when not auto) -->
-                                    <StackPanel x:Name="ManualTimesPanel">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="*"/>
-                                            </Grid.ColumnDefinitions>
-                                            
-                                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                                <TextBlock Text="Start Time" Style="{StaticResource FieldLabel}"/>
-                                                <TextBox x:Name="NightStartTime" Text="21:00"/>
-                                            </StackPanel>
-                                            
-                                            <StackPanel Grid.Column="1" Margin="8,0,0,0">
-                                                <TextBlock Text="End Time" Style="{StaticResource FieldLabel}"/>
-                                                <TextBox x:Name="NightEndTime" Text="07:00"/>
-                                            </StackPanel>
-                                        </Grid>
-                                    </StackPanel>
-                                    
-                                    <!-- Algorithm Selector -->
-                                    <TextBlock Text="Transformation Method" Style="{StaticResource FieldLabel}"/>
-                                    <ComboBox x:Name="NightAlgorithmCombo" Margin="0,0,0,12" SelectionChanged="NightAlgorithmCombo_Changed">
-                                        <ComboBoxItem Content="Standard (Recommended)" ToolTip="Tanner Helland's algorithm. Provides a pleasant, warm, photo-realistic tint." IsSelected="True"/>
-                                        <ComboBoxItem Content="Accurate (CIE 1931)" ToolTip="Physically accurate simulation of a black-body radiator. More scientifically precise."/>
-                                        <ComboBoxItem Content="Blue Light Filter" ToolTip="Focuses specifically on reducing blue light (460nm range) for potential sleep benefits. May look less 'natural'."/>
-                                    </ComboBox>
-
-                                    <!-- Temperature in Kelvin -->
-                                    <TextBlock Text="Night Temperature" Style="{StaticResource FieldLabel}"/>
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
-                                        <Slider x:Name="NightTempSlider" Grid.Column="0" Style="{StaticResource ModernSlider}"
-                                                Minimum="1900" Maximum="6500" Value="2700"
-                                                ValueChanged="NightTempSlider_ValueChanged"/>
-                                        <TextBlock x:Name="NightTempValue" Grid.Column="1" Text="2700K" 
-                                                   Style="{StaticResource ValueDisplay}" Width="50"/>
-                                    </Grid>
-                                    <Grid Margin="0,2,0,0">
-                                        <TextBlock Text="Warm (1900K)" Foreground="{StaticResource TextDim}" FontSize="10"/>
-                                        <TextBlock Text="Daylight (6500K)" Foreground="{StaticResource TextDim}" FontSize="10" 
-                                                   HorizontalAlignment="Right"/>
-                                    </Grid>
-                                    
-                                    <!-- Fade Duration -->
-                                    <TextBlock Text="Fade Duration (minutes)" Style="{StaticResource FieldLabel}"/>
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
-                                        <Slider x:Name="FadeSlider" Grid.Column="0" Style="{StaticResource ModernSlider}"
-                                                Minimum="0" Maximum="60" Value="30"
-                                                ValueChanged="FadeSlider_ValueChanged"/>
-                                        <TextBlock x:Name="FadeValue" Grid.Column="1" Text="30" 
-                                                   Style="{StaticResource ValueDisplay}" Width="40"/>
-                                    </Grid>
-                                </StackPanel>
+                                <!-- Schedule Editor -->
+                                <local:NightModeScheduleControl x:Name="ScheduleEditor" Margin="0,12,0,0" Height="360"/>
                                 
                                 <!-- Per Monitor Settings -->
                                 <Separator Margin="0,16,0,16" Background="#3F3F3F"/>

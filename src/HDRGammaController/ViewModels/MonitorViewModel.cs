@@ -29,7 +29,7 @@ namespace HDRGammaController.ViewModels
         /// <summary>
         /// Callback to apply gamma with calibration settings.
         /// </summary>
-        public Action<MonitorInfo, GammaMode, CalibrationSettings>? OnApplyWithCalibration { get; set; }
+        public Action<MonitorInfo, GammaMode, CalibrationSettings?, int?>? OnApplyWithCalibration { get; set; }
 
         public string Header => $"{_index}: {_model.FriendlyName} ({(_model.IsHdrActive ? "HDR" : "SDR")})";
         
@@ -86,10 +86,10 @@ namespace HDRGammaController.ViewModels
             var allMonitors = GetAllMonitors?.Invoke() ?? new List<MonitorInfo> { _model };
             
             var settingsWindow = new SettingsWindow(_model, allMonitors, _settingsManager, 
-                (monitor, mode, calibration) =>
+                (monitor, mode, calibration, nightOverride) =>
                 {
                     // Delegate to parent to ensure Night Mode is respected
-                    OnApplyWithCalibration?.Invoke(monitor, mode, calibration);
+                    OnApplyWithCalibration?.Invoke(monitor, mode, calibration, nightOverride);
                     
                     if (monitor.MonitorDevicePath == _model.MonitorDevicePath)
                     {
@@ -104,7 +104,7 @@ namespace HDRGammaController.ViewModels
              try
              {
                 // Delegate to parent to ensure Night Mode is respected
-                OnApplyWithCalibration?.Invoke(_model, mode, null);
+                OnApplyWithCalibration?.Invoke(_model, mode, null, null);
                 
                 // Rebuild sub-items to update checkmarks
                 RebuildSubItems();
