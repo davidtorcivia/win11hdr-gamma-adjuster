@@ -24,11 +24,9 @@ namespace HDRGammaController
         private Dictionary<string, MonitorProfileData> _pendingChanges = new();
         // ExcludedApps removed
         
-        // Debounce timer for live preview
-        
-        // Debounce timer for live preview
+        // Debounce timer for live preview - reused to avoid GC pressure
         private DispatcherTimer? _previewTimer;
-        private const int PreviewDebounceMs = 150;
+        private const int PreviewDebounceMs = 100; // Faster response for UI
 
         public SettingsWindow(
             MonitorInfo initialMonitor,
@@ -196,17 +194,23 @@ namespace HDRGammaController
         {
             if (_isLoading) return;
             if (LivePreviewToggle?.IsChecked != true) return;
-            
-            _previewTimer?.Stop();
-            _previewTimer = new DispatcherTimer
+
+            // Reuse single timer instance to avoid GC pressure
+            if (_previewTimer == null)
             {
-                Interval = TimeSpan.FromMilliseconds(PreviewDebounceMs)
-            };
-            _previewTimer.Tick += (s, _) =>
-            {
-                _previewTimer?.Stop();
-                ApplyCurrentPreview();
-            };
+                _previewTimer = new DispatcherTimer
+                {
+                    Interval = TimeSpan.FromMilliseconds(PreviewDebounceMs)
+                };
+                _previewTimer.Tick += (s, e) =>
+                {
+                    _previewTimer?.Stop();
+                    // Run preview async to keep UI responsive
+                    Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(ApplyCurrentPreview));
+                };
+            }
+
+            _previewTimer.Stop();
             _previewTimer.Start();
         }
         

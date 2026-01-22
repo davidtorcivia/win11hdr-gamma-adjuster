@@ -25,6 +25,12 @@ namespace HDRGammaController
         private readonly Action<MonitorInfo, GammaMode, CalibrationSettings?, int?> _applyCallback;
         private ObservableCollection<AppExclusionRule> _excludedApps;
         private NightModeSettings _editingNightMode;
+
+        // Throttle refresh to avoid excessive UI updates
+        private DateTime _lastRefreshTime = DateTime.MinValue;
+        private const int RefreshThrottleMs = 500;
+        private bool _refreshPending = false;
+        private List<MonitorInfo>? _cachedMonitors;
         
         public event PropertyChangedEventHandler? PropertyChanged;
         
@@ -55,8 +61,8 @@ namespace HDRGammaController
             _nightModeService = nightModeService;
             _applyCallback = applyCallback;
             
-            // Re-refresh when simple blend changes (for live update)
-            _nightModeService.BlendChanged += (val) => Dispatcher.Invoke(RefreshMonitors);
+            // Re-refresh when simple blend changes (for live update) - throttled
+            _nightModeService.BlendChanged += (val) => Dispatcher.BeginInvoke(new Action(ThrottledRefresh));
 
             // Init App Exclusion
             _excludedApps = new ObservableCollection<AppExclusionRule>(_settingsManager.ExcludedApps);
@@ -77,11 +83,13 @@ namespace HDRGammaController
             
             ScheduleEditor.PreviewTemperatureRequested += async (kelvin) =>
             {
-                // Offload heavy gamma ramp application
-                await Task.Run(() => 
+                // Use cached monitors during preview to avoid repeated enumeration
+                var monitors = _cachedMonitors ?? _monitorManager.EnumerateMonitors();
+
+                // Offload heavy gamma ramp application to background thread
+                await Task.Run(() =>
                 {
-                    var monitors = _monitorManager.EnumerateMonitors();
-                    foreach(var m in monitors)
+                    foreach (var m in monitors)
                     {
                         var profile = _settingsManager.GetMonitorProfile(m.MonitorDevicePath);
                         var cal = profile?.ToCalibrationSettings() ?? new CalibrationSettings();
@@ -92,10 +100,31 @@ namespace HDRGammaController
 
             RefreshMonitors();
         }
-        
+
+        private void ThrottledRefresh()
+        {
+            var now = DateTime.Now;
+            if ((now - _lastRefreshTime).TotalMilliseconds >= RefreshThrottleMs)
+            {
+                _lastRefreshTime = now;
+                RefreshMonitors();
+            }
+            else if (!_refreshPending)
+            {
+                _refreshPending = true;
+                // Schedule delayed refresh
+                _ = Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() =>
+                {
+                    _refreshPending = false;
+                    RefreshMonitors();
+                }));
+            }
+        }
+
         private void RefreshMonitors()
         {
             var monitors = _monitorManager.EnumerateMonitors();
+            _cachedMonitors = monitors; // Cache for preview operations
             var items = new List<object>(); // Heterogeneous list
             
             // Night mode data

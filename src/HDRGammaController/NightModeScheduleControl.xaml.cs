@@ -24,9 +24,12 @@ namespace HDRGammaController
         private bool _isDragging = false;
         private SchedulePointViewModel? _dragItem = null;
         private DateTime _lastPreviewTime = DateTime.MinValue;
+        private DateTime _lastDrawTime = DateTime.MinValue;
         private const int PreviewThrottleMs = 250; // Throttle to 4fps for heavy API calls
+        private const int DrawThrottleMs = 16; // ~60fps for UI drawing
         private bool _isPreviewRunning = false; // Prevent stacking calls
-        
+        private bool _drawPending = false;
+
         private const int GraphStartHour = 4;
         private const double GraphStartMins = GraphStartHour * 60;
 
@@ -46,8 +49,7 @@ namespace HDRGammaController
 
             // Ensure schedule exists
             _settings.EnsureSchedule(_lat, _lon);
-            
-            RefreshList();
+
             RefreshList();
             DrawGrid();
             DrawCurve();
@@ -62,12 +64,10 @@ namespace HDRGammaController
         {
             if (double.TryParse(LatBox.Text, out double lat)) _lat = lat;
             if (double.TryParse(LonBox.Text, out double lon)) _lon = lon;
-            
+
             _settings.Latitude = _lat;
             _settings.Longitude = _lon;
-            
-            _settings.Longitude = _lon;
-            
+
             DrawGrid();
             DrawCurve();
             NotifyChange();
@@ -99,9 +99,7 @@ namespace HDRGammaController
                     
                     _settings.Latitude = _lat;
                     _settings.Longitude = _lon;
-                    _settings.Latitude = _lat;
-                    _settings.Longitude = _lon;
-                    
+
                     // Auto-convert default schedule to Sunset/Sunrise if simple
                     if (_settings.Schedule.Count == 2)
                     {
@@ -417,59 +415,60 @@ namespace HDRGammaController
                 var pos = e.GetPosition(CurveCanvas);
                 double w = CurveCanvas.ActualWidth;
                 double h = CurveCanvas.ActualHeight;
-                
-                // Update Time
-                double pctX = Math.Clamp(pos.X / w, 0, 1);
-                
-                // Used helper to get time from X
-                TimeSpan newTime = XToTime(pos.X, w); // XToTime handles boundaries loosely, but we clamped X
-                // Re-clamp X? XToTime doesn't clamp. 
-                // But pos.X is not clamped yet.
-                // Let's rely on XToTime for logic.
-                // If pos.X is out of bounds, it might produce odd times? 
-                // XToTime logic: pct = x/w. If x < 0 -> pct < 0. relM < 0. absM = relM + start. 
-                // e.g. x=-10. relM = -10. absM = 230. 
-                // We want to CLAMP x to 0..w first.
-                
+
                 double clampedX = Math.Clamp(pos.X, 0, w);
-                newTime = XToTime(clampedX, w);
-                
-                double newMins = newTime.TotalMinutes;
-                
+                TimeSpan newTime = XToTime(clampedX, w);
+
                 // Update Temp
                 double newK = YToTemp(pos.Y, h);
                 _dragItem.TargetKelvin = (int)newK;
-                
+
                 if (_dragItem.TriggerType == ScheduleTriggerType.FixedTime)
                 {
                     _dragItem.Model.Time = newTime;
                 }
-                
+
                 _dragItem.RefreshDisplay(); // Update UI string
-                
-                _dragItem.RefreshDisplay(); // Update UI string
-                
-                DrawCurve(); // Redraw only curve and nodes
-                
-                // Update Overlay
+
+                // Update Overlay immediately (lightweight)
                 UpdateOverlay(pos, w, _dragItem);
-                
-                // Live visual preview (force temp), throttled
-                // Using serialized async to prevent stack
+
+                // Throttle curve redraw to ~60fps for smooth UI
                 var now = DateTime.Now;
+                if ((now - _lastDrawTime).TotalMilliseconds >= DrawThrottleMs)
+                {
+                    _lastDrawTime = now;
+                    DrawCurve();
+                }
+                else if (!_drawPending)
+                {
+                    // Schedule a final draw after throttle period
+                    _drawPending = true;
+                    _ = Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Input, new Action(() =>
+                    {
+                        _drawPending = false;
+                        if (_isDragging) DrawCurve();
+                    }));
+                }
+
+                // Live visual preview (force temp), throttled more aggressively for heavy API calls
                 if ((now - _lastPreviewTime).TotalMilliseconds > PreviewThrottleMs && !_isPreviewRunning)
                 {
                     _lastPreviewTime = now;
                     _isPreviewRunning = true;
-                    try 
+                    // Fire and forget - don't await to keep UI responsive
+                    _ = Task.Run(async () =>
                     {
-                        var task = PreviewTemperatureRequested?.Invoke(_dragItem.TargetKelvin);
-                        if (task != null) await task;
-                    } 
-                    finally 
-                    {
-                        _isPreviewRunning = false;
-                    }
+                        try
+                        {
+                            var task = PreviewTemperatureRequested?.Invoke(_dragItem?.TargetKelvin);
+                            if (task != null) await task;
+                        }
+                        finally
+                        {
+                            _isPreviewRunning = false;
+                        }
+                    });
                 }
             }
         }
