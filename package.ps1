@@ -47,8 +47,8 @@ function Create-Package {
         /p:IncludeNativeLibrariesForSelfExtract=true `
         /p:DebugType=None
 
-    # 2. Copy Assets (ICM profiles, Readme)
-    Copy-Item "*.icm" $outDir
+    # 2. Copy Assets (Readme, License)
+    # Note: ICM profiles are now embedded in the EXE and extracted at runtime
     Copy-Item "README.md" $outDir
     Copy-Item "LICENSE.txt" $outDir
     

@@ -15,6 +15,16 @@
     <Resource Include="app.ico" />
   </ItemGroup>
 
+  <!-- Embedded ICM profiles - extracted at runtime if missing or updated -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\srgb_to_gamma2p2_100_mhc2.icm" Link="Resources\srgb_to_gamma2p2_100_mhc2.icm" />
+    <EmbeddedResource Include="..\..\srgb_to_gamma2p2_200_mhc2.icm" Link="Resources\srgb_to_gamma2p2_200_mhc2.icm" />
+    <EmbeddedResource Include="..\..\srgb_to_gamma2p2_300_mhc2.icm" Link="Resources\srgb_to_gamma2p2_300_mhc2.icm" />
+    <EmbeddedResource Include="..\..\srgb_to_gamma2p2_400_mhc2.icm" Link="Resources\srgb_to_gamma2p2_400_mhc2.icm" />
+    <EmbeddedResource Include="..\..\srgb_to_gamma2p2_sdr.icm" Link="Resources\srgb_to_gamma2p2_sdr.icm" />
+    <EmbeddedResource Include="..\..\srgb_to_gamma2p2_unspecified.icm" Link="Resources\srgb_to_gamma2p2_unspecified.icm" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\HDRGammaController.Core\HDRGammaController.Core.csproj" />
     <ProjectReference Include="..\HDRGammaController.Interop\HDRGammaController.Interop.csproj" />

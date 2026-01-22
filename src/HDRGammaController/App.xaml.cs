@@ -15,7 +15,14 @@ namespace HDRGammaController
             {
                 Console.WriteLine("App.OnStartup: Starting...");
                 base.OnStartup(e);
-                
+
+                // Extract embedded ICM profiles if missing or updated
+                int extracted = ResourceExtractor.ExtractIcmProfiles();
+                if (extracted > 0)
+                {
+                    Console.WriteLine($"App.OnStartup: Extracted/updated {extracted} ICM profiles");
+                }
+
                 // Apply theme based on Windows settings
                 ApplyTheme();
 
