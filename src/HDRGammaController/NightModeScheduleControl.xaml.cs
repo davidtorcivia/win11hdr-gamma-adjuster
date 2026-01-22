@@ -378,16 +378,17 @@ namespace HDRGammaController
                 {
                     _dragItem = vm;
                     _isDragging = true;
+                    _dragItem.SuppressNotifications = true; // Suppress during drag
                     el.CaptureMouse();
                     e.Handled = true;
-                    
+
                     // Select row in grid
                     PointsGrid.SelectedItem = vm;
-                    
+
                     // Show Overlay
                     DragOverlay.Visibility = Visibility.Visible;
                     UpdateOverlay(e.GetPosition(CurveCanvas), CurveCanvas.ActualWidth, vm);
-                    
+
                     // Start Preview
                     // Trigger async fire
                     _ = PreviewTemperatureRequested?.Invoke(vm.TargetKelvin);
@@ -483,15 +484,21 @@ namespace HDRGammaController
         {
             if (_isDragging)
             {
+                // Restore notifications before clearing drag state
+                if (_dragItem != null)
+                {
+                    _dragItem.SuppressNotifications = false;
+                }
+
                 _isDragging = false;
                 _dragItem = null;
                 Mouse.Capture(null); // Release capture global
-                
+
                 DragOverlay.Visibility = Visibility.Collapsed;
-                
+
                 // Stop preview, revert to schedule logic (which is now updated)
                 PreviewTemperatureRequested?.Invoke(null);
-                
+
                 RefreshList(); // Sync grid
                 NotifyChange(); // NOW we save
             }
@@ -580,12 +587,18 @@ namespace HDRGammaController
     {
         public NightModeScheduleControl Parent { get; set; }
         public NightModeSchedulePoint Model { get; }
-        
-        public SchedulePointViewModel(NightModeSchedulePoint model) 
+
+        /// <summary>
+        /// When true, property setters don't trigger change notifications.
+        /// Used during drag operations to avoid redundant updates.
+        /// </summary>
+        public bool SuppressNotifications { get; set; }
+
+        public SchedulePointViewModel(NightModeSchedulePoint model)
         {
             Model = model;
         }
-        
+
         public ScheduleTriggerType TriggerType
         {
             get => Model.TriggerType;
@@ -620,21 +633,24 @@ namespace HDRGammaController
             get => Model.TargetKelvin;
             set { Model.TargetKelvin = value; Notify(); }
         }
-        
+
         public int FadeMinutes
         {
             get => Model.FadeMinutes;
             set { Model.FadeMinutes = value; Notify(); }
         }
-        
+
         public void RefreshDisplay()
         {
             // Used to force UI update if backing fields change
         }
-        
+
         private void Notify()
         {
-             Parent?.OnPointChanged();
+            if (!SuppressNotifications)
+            {
+                Parent?.OnPointChanged();
+            }
         }
     }
 }
