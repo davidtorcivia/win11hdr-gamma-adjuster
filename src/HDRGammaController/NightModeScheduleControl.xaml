@@ -26,6 +26,35 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- Delete button with hover effect -->
+        <Style TargetType="Button" x:Key="DeleteBtn">
+            <Setter Property="Background" Value="#333"/>
+            <Setter Property="Foreground" Value="#FF5555"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="8,2"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#C42B1C"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="#A02515"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </UserControl.Resources>
     
     <Grid>
@@ -82,10 +111,24 @@
         </Border>
 
         <!-- Toolbar -->
-        <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
-            <Button Content="+ Add Point" Click="AddPoint_Click" Style="{StaticResource SmallBtn}" Margin="0,0,8,0"/>
-            <Button Content="Reset Default" Click="Reset_Click" Style="{StaticResource SmallBtn}"/>
-        </StackPanel>
+        <Grid Grid.Row="2" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Orientation="Horizontal">
+                <Button Content="+ Add Point" Click="AddPoint_Click" Style="{StaticResource SmallBtn}" Margin="0,0,8,0"/>
+                <Button Content="Reset Default" Click="Reset_Click" Style="{StaticResource SmallBtn}"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                <CheckBox x:Name="UltraWarmCheck" Checked="UltraWarm_Changed" Unchecked="UltraWarm_Changed"
+                          VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <TextBlock Foreground="#CCC" FontSize="11" VerticalAlignment="Center">
+                    <Run Text="Ultra Warm" FontWeight="SemiBold"/>
+                    <Run Text=" — Enhanced warmth below 2800K" Foreground="#888"/>
+                </TextBlock>
+            </StackPanel>
+        </Grid>
 
         <!-- List -->
         <!-- Use standard ScrollViewer in parent, allow Grid to auto-size -->
@@ -185,9 +228,9 @@
                 <DataGridTemplateColumn Width="*"> <!-- Expand to fill -->
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <Button Content="Delete" Click="DeleteRow_Click" 
-                                    Background="#333" Foreground="#FF5555" BorderThickness="0" 
-                                    FontSize="11" Padding="8,2" HorizontalAlignment="Center"/>
+                            <Button Content="Delete" Click="DeleteRow_Click"
+                                    Style="{StaticResource DeleteBtn}"
+                                    HorizontalAlignment="Center"/>
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>

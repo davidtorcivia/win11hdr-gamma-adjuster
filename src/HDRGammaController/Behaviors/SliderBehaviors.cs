@@ -48,63 +48,82 @@ namespace HDRGammaController.Behaviors
         public static void SetIsEnabled(DependencyObject obj, bool value) => obj.SetValue(IsEnabledProperty, value);
         #endregion
 
+        private static bool _isSnapping = false;
+
         private static void OnDetentPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         {
             if (d is Slider slider)
             {
                 // Unsubscribe first to avoid duplicates
                 slider.ValueChanged -= Slider_ValueChanged;
-                slider.PreviewMouseUp -= Slider_PreviewMouseUp;
+                slider.PreviewMouseLeftButtonUp -= Slider_PreviewMouseLeftButtonUp;
+                slider.LostMouseCapture -= Slider_LostMouseCapture;
 
                 if (GetIsEnabled(slider))
                 {
                     slider.ValueChanged += Slider_ValueChanged;
-                    slider.PreviewMouseUp += Slider_PreviewMouseUp;
+                    slider.PreviewMouseLeftButtonUp += Slider_PreviewMouseLeftButtonUp;
+                    slider.LostMouseCapture += Slider_LostMouseCapture;
                 }
             }
         }
 
         private static void Slider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
+            // During drag, snap immediately when crossing the detent threshold
             if (sender is Slider slider && !_isSnapping)
             {
                 double detent = GetDetentValue(slider);
                 double threshold = GetSnapThreshold(slider);
                 double current = e.NewValue;
+                double previous = e.OldValue;
 
-                // Check if we're close to the detent but not exactly on it
-                if (Math.Abs(current - detent) <= threshold && Math.Abs(current - detent) > 0.001)
+                // Check if we just crossed into the snap zone
+                bool wasOutside = Math.Abs(previous - detent) > threshold;
+                bool isInside = Math.Abs(current - detent) <= threshold;
+
+                if (wasOutside && isInside)
                 {
-                    // Visual feedback - we're in the "snap zone"
-                    // The actual snap happens on mouse up
-                }
-            }
-        }
-
-        private static bool _isSnapping = false;
-
-        private static void Slider_PreviewMouseUp(object sender, MouseButtonEventArgs e)
-        {
-            if (sender is Slider slider)
-            {
-                double detent = GetDetentValue(slider);
-                double threshold = GetSnapThreshold(slider);
-                double current = slider.Value;
-
-                // Snap to detent if within threshold
-                if (Math.Abs(current - detent) <= threshold)
-                {
+                    // Snap immediately for tactile feel
                     _isSnapping = true;
                     slider.Value = detent;
                     _isSnapping = false;
                 }
             }
         }
+
+        private static void Slider_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            SnapIfNeeded(sender as Slider);
+        }
+
+        private static void Slider_LostMouseCapture(object sender, MouseEventArgs e)
+        {
+            // Also snap when mouse capture is lost (e.g., dragging off the slider)
+            SnapIfNeeded(sender as Slider);
+        }
+
+        private static void SnapIfNeeded(Slider? slider)
+        {
+            if (slider == null || _isSnapping) return;
+
+            double detent = GetDetentValue(slider);
+            double threshold = GetSnapThreshold(slider);
+            double current = slider.Value;
+
+            // Snap to detent if within threshold
+            if (Math.Abs(current - detent) <= threshold && Math.Abs(current - detent) > 0.001)
+            {
+                _isSnapping = true;
+                slider.Value = detent;
+                _isSnapping = false;
+            }
+        }
     }
 
     /// <summary>
     /// Attached behavior for click-to-edit functionality on TextBlocks.
-    /// Shows a TextBox overlay when clicked for direct value entry.
+    /// Shows a TextBox popup when clicked for direct value entry.
     /// </summary>
     public static class ClickToEdit
     {
@@ -148,19 +167,19 @@ namespace HDRGammaController.Behaviors
         {
             if (d is TextBlock textBlock)
             {
-                textBlock.MouseLeftButtonDown -= TextBlock_MouseLeftButtonDown;
+                textBlock.MouseLeftButtonUp -= TextBlock_MouseLeftButtonUp;
                 textBlock.Cursor = null;
 
                 if (e.NewValue is Slider)
                 {
-                    textBlock.MouseLeftButtonDown += TextBlock_MouseLeftButtonDown;
+                    textBlock.MouseLeftButtonUp += TextBlock_MouseLeftButtonUp;
                     textBlock.Cursor = Cursors.Hand;
                     textBlock.ToolTip = "Click to enter value";
                 }
             }
         }
 
-        private static void TextBlock_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        private static void TextBlock_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
             if (sender is TextBlock textBlock && GetTargetSlider(textBlock) is Slider slider)
             {
@@ -171,12 +190,11 @@ namespace HDRGammaController.Behaviors
 
         private static void ShowEditPopup(TextBlock textBlock, Slider slider)
         {
-            // Create a simple input dialog
             var popup = new System.Windows.Controls.Primitives.Popup
             {
                 PlacementTarget = textBlock,
                 Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom,
-                StaysOpen = false,
+                StaysOpen = true, // Keep open until explicitly closed
                 AllowsTransparency = true
             };
 
@@ -202,41 +220,51 @@ namespace HDRGammaController.Behaviors
                 CaretBrush = System.Windows.Media.Brushes.White
             };
 
-            textBox.KeyDown += (s, args) =>
-            {
-                if (args.Key == Key.Enter)
-                {
-                    if (double.TryParse(textBox.Text, out double value))
-                    {
-                        // Clamp to slider range
-                        value = Math.Max(slider.Minimum, Math.Min(slider.Maximum, value));
-                        slider.Value = value;
-                    }
-                    popup.IsOpen = false;
-                }
-                else if (args.Key == Key.Escape)
-                {
-                    popup.IsOpen = false;
-                }
-            };
+            bool committed = false;
 
-            textBox.LostFocus += (s, args) =>
+            void CommitAndClose()
             {
+                if (committed) return;
+                committed = true;
+
                 if (double.TryParse(textBox.Text, out double value))
                 {
                     value = Math.Max(slider.Minimum, Math.Min(slider.Maximum, value));
                     slider.Value = value;
                 }
                 popup.IsOpen = false;
+            }
+
+            textBox.KeyDown += (s, args) =>
+            {
+                if (args.Key == Key.Enter)
+                {
+                    CommitAndClose();
+                    args.Handled = true;
+                }
+                else if (args.Key == Key.Escape)
+                {
+                    committed = true; // Don't apply changes
+                    popup.IsOpen = false;
+                    args.Handled = true;
+                }
+            };
+
+            textBox.LostFocus += (s, args) =>
+            {
+                CommitAndClose();
             };
 
             border.Child = textBox;
             popup.Child = border;
             popup.IsOpen = true;
 
-            // Focus and select all text
-            textBox.Focus();
-            textBox.SelectAll();
+            // Focus and select all text after popup is open
+            textBox.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                textBox.Focus();
+                textBox.SelectAll();
+            }), System.Windows.Threading.DispatcherPriority.Input);
         }
     }
 }

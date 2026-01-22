@@ -42,7 +42,7 @@ namespace HDRGammaController.Core
         /// <summary>
         /// Calculates RGB multipliers for a given color temperature based on the selected algorithm.
         /// </summary>
-        public static (double R, double G, double B) GetTemperatureMultipliers(double temperature, NightModeAlgorithm algorithm)
+        public static (double R, double G, double B) GetTemperatureMultipliers(double temperature, NightModeAlgorithm algorithm, bool useUltraWarmMode = false)
         {
             // Convert -50 to +50 scale to Kelvin: -50 = 2700K, 0 = 6500K, +50 = 10000K
             int kelvin = (int)(6500 + temperature * 70);
@@ -52,22 +52,23 @@ namespace HDRGammaController.Core
             {
                 NightModeAlgorithm.AccurateCIE1931 => GetAccurateMultipliers(kelvin),
                 NightModeAlgorithm.BlueReduction => GetBlueReductionMultipliers(kelvin),
-                _ => GetStandardMultipliers(kelvin)
+                _ => GetStandardMultipliers(kelvin, useUltraWarmMode)
             };
         }
         
         /// <summary>
         /// Standard approximation (Tanner Helland's algorithm).
         /// Fast, pleasant, and widely used in photo editing.
+        /// When useUltraWarmMode is true, applies enhanced curve below 2800K for more dramatic effect.
         /// </summary>
-        public static (double R, double G, double B) GetStandardMultipliers(int kelvin)
+        public static (double R, double G, double B) GetStandardMultipliers(int kelvin, bool useUltraWarmMode = false)
         {
             // Reference point: 6500K should return (1, 1, 1)
             var ref6500 = GetRawKelvinRGB_Helland(6500);
             double refMax = Math.Max(ref6500.r, Math.Max(ref6500.g, ref6500.b));
-            
+
             var target = GetRawKelvinRGB_Helland(kelvin);
-            
+
             // Normalize target
             double maxVal = Math.Max(target.r, Math.Max(target.g, target.b));
             if (maxVal > 0)
@@ -76,12 +77,31 @@ namespace HDRGammaController.Core
                 target.g /= maxVal;
                 target.b /= maxVal;
             }
-            
+
             // Scale by reference
             double r = refMax > 0 ? target.r / (ref6500.r / refMax) : target.r;
             double g = refMax > 0 ? target.g / (ref6500.g / refMax) : target.g;
             double b = refMax > 0 ? target.b / (ref6500.b / refMax) : target.b;
-            
+
+            // Enhanced curve below 2800K for more dramatic night mode effect (optional)
+            // The Helland algorithm plateaus at very warm temps, so we accelerate the reduction
+            if (useUltraWarmMode && kelvin < 2800)
+            {
+                // Apply additional power curve to make low temps more distinct
+                // At 2800K: factor = 0, no change
+                // At 1900K: factor = 1, maximum additional reduction
+                double factor = Math.Clamp((2800.0 - kelvin) / (2800.0 - 1900.0), 0.0, 1.0);
+
+                // Use power curve for smooth transition (factor^2 for quadratic acceleration)
+                double accel = factor * factor;
+
+                // Additional reduction for green and blue
+                // Green: reduce by up to 25% more (from ~0.54 to ~0.41)
+                // Blue: already at 0 by 1900K, but accelerate the drop
+                g *= (1.0 - accel * 0.25);
+                b *= (1.0 - accel * 0.5);
+            }
+
             return (Math.Clamp(r, 0, 1.5), Math.Clamp(g, 0, 1.5), Math.Clamp(b, 0, 1.5));
         }
 
@@ -256,7 +276,7 @@ namespace HDRGammaController.Core
                  
                 if (Math.Abs(settings.Temperature) > 0.01)
                 {
-                    var temp = GetTemperatureMultipliers(settings.Temperature, settings.Algorithm);
+                    var temp = GetTemperatureMultipliers(settings.Temperature, settings.Algorithm, settings.UseUltraWarmMode);
                     r *= temp.R;
                     g *= temp.G;
                     b *= temp.B;

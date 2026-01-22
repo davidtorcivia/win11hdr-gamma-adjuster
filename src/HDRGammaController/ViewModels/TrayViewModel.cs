@@ -285,11 +285,15 @@ namespace HDRGammaController.ViewModels
                     // Calculate night mode shift (-50 to +50 scale)
                     double nightShift = (currentKelvin - 6500) / 70.0;
                     calibration.Temperature += nightShift;
-                    
+
+                    // Apply night mode algorithm and ultra warm settings
                     calibration.Algorithm = _settingsManager.NightMode.Algorithm;
+                    calibration.UseUltraWarmMode = _settingsManager.NightMode.UseUltraWarmMode;
                 }
                 
-                calibration.Temperature = Math.Clamp(calibration.Temperature, -50.0, 50.0);
+                // Clamp to extended range: -65.7 to +50 maps to 1900K-10000K
+                // This allows night mode schedule to use temps below 3000K
+                calibration.Temperature = Math.Clamp(calibration.Temperature, -65.7, 50.0);
                 
                 Console.WriteLine($"RequestApply: Applying {monitor.FriendlyName} - Gamma={mode}, Brightness={brightness}, Temp={calibration.Temperature:F1}");
                 _dispwinRunner.ApplyGamma(monitor, mode, monitor.SdrWhiteLevel, calibration); 

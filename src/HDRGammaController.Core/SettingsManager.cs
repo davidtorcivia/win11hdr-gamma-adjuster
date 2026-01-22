@@ -95,7 +95,8 @@ namespace HDRGammaController.Core
         public int TemperatureKelvin { get; set; } = 2700;
         public int FadeMinutes { get; set; } = 30;
         public NightModeAlgorithm Algorithm { get; set; } = NightModeAlgorithm.Standard;
-        
+        public bool UseUltraWarmMode { get; set; } = false;
+
         public List<NightModeSchedulePoint> Schedule { get; set; } = new List<NightModeSchedulePoint>();
         
         public NightModeSettings ToNightModeSettings() => new NightModeSettings
@@ -109,9 +110,10 @@ namespace HDRGammaController.Core
             TemperatureKelvin = TemperatureKelvin,
             FadeMinutes = FadeMinutes,
             Algorithm = Algorithm,
+            UseUltraWarmMode = UseUltraWarmMode,
             Schedule = Schedule ?? new List<NightModeSchedulePoint>()
         };
-        
+
         public static NightModeSettingsData FromNightModeSettings(NightModeSettings settings) => new NightModeSettingsData
         {
             Enabled = settings.Enabled,
@@ -123,6 +125,7 @@ namespace HDRGammaController.Core
             TemperatureKelvin = settings.TemperatureKelvin,
             FadeMinutes = settings.FadeMinutes,
             Algorithm = settings.Algorithm,
+            UseUltraWarmMode = settings.UseUltraWarmMode,
             Schedule = settings.Schedule ?? new List<NightModeSchedulePoint>()
         };
     }

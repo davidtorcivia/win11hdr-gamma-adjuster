@@ -62,10 +62,13 @@ namespace HDRGammaController.Core
         /// <summary>
         /// Algorithm to use for temperature adjustment.
         /// </summary>
-        /// <summary>
-        /// Algorithm to use for temperature adjustment.
-        /// </summary>
         public NightModeAlgorithm Algorithm { get; set; } = NightModeAlgorithm.Standard;
+
+        /// <summary>
+        /// Enable enhanced warmth curve below 2800K for more dramatic visual changes.
+        /// Only applies when Algorithm is Standard.
+        /// </summary>
+        public bool UseUltraWarmMode { get; set; } = false;
 
         /// <summary>
         /// If true, uses standard linear dimming instead of perceptual (gamma-lift) dimming.
@@ -108,7 +111,8 @@ namespace HDRGammaController.Core
             RedOffset = this.RedOffset,
             GreenOffset = this.GreenOffset,
             BlueOffset = this.BlueOffset,
-            Algorithm = this.Algorithm
+            Algorithm = this.Algorithm,
+            UseUltraWarmMode = this.UseUltraWarmMode
         };
 
         /// <summary>
@@ -133,7 +137,7 @@ namespace HDRGammaController.Core
                 HashCode.Combine(brightnessKey, tempKey, tempOffsetKey, tintKey),
                 HashCode.Combine(rGainKey, gGainKey, bGainKey),
                 HashCode.Combine(rOffsetKey, gOffsetKey, bOffsetKey),
-                HashCode.Combine((int)Algorithm, UseLinearBrightness)
+                HashCode.Combine((int)Algorithm, UseLinearBrightness, UseUltraWarmMode)
             );
         }
     }

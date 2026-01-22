@@ -284,6 +284,8 @@
         <Style x:Key="EditableValue" TargetType="TextBlock" BasedOn="{StaticResource ValueDisplay}">
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="ToolTip" Value="Click to enter value"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="8,0,0,0"/>
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
                     <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>

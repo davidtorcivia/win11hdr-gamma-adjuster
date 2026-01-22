@@ -47,6 +47,9 @@ namespace HDRGammaController
             if (_lat.HasValue) LatBox.Text = _lat.Value.ToString("F2");
             if (_lon.HasValue) LonBox.Text = _lon.Value.ToString("F2");
 
+            // Initialize ultra warm checkbox
+            UltraWarmCheck.IsChecked = settings.UseUltraWarmMode;
+
             // Ensure schedule exists
             _settings.EnsureSchedule(_lat, _lon);
 
@@ -58,6 +61,13 @@ namespace HDRGammaController
         private void NotifyChange()
         {
             ScheduleChanged?.Invoke();
+        }
+
+        private void UltraWarm_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_settings == null) return;
+            _settings.UseUltraWarmMode = UltraWarmCheck.IsChecked == true;
+            NotifyChange();
         }
 
         private void Location_LostFocus(object sender, RoutedEventArgs e)
@@ -463,19 +473,31 @@ namespace HDRGammaController
                 {
                     _lastPreviewTime = now;
                     _isPreviewRunning = true;
-                    // Fire and forget - don't await to keep UI responsive
-                    _ = Task.Run(async () =>
+
+                    // Capture the temperature value NOW before async execution
+                    int? capturedTemp = _dragItem?.TargetKelvin;
+                    var handler = PreviewTemperatureRequested;
+
+                    if (handler != null && capturedTemp.HasValue)
                     {
-                        try
+                        // Fire and forget - don't await to keep UI responsive
+                        _ = Task.Run(async () =>
                         {
-                            var task = PreviewTemperatureRequested?.Invoke(_dragItem?.TargetKelvin);
-                            if (task != null) await task;
-                        }
-                        finally
-                        {
-                            _isPreviewRunning = false;
-                        }
-                    });
+                            try
+                            {
+                                var task = handler.Invoke(capturedTemp);
+                                if (task != null) await task;
+                            }
+                            finally
+                            {
+                                _isPreviewRunning = false;
+                            }
+                        });
+                    }
+                    else
+                    {
+                        _isPreviewRunning = false;
+                    }
                 }
             }
         }
@@ -575,11 +597,126 @@ namespace HDRGammaController
         {
             if (sender is Button b && b.DataContext is SchedulePointViewModel vm)
             {
-                _settings.Schedule.Remove(vm.Model);
-                RefreshList();
-                DrawCurve();
-                NotifyChange();
+                // Show styled confirmation dialog
+                if (ShowDeleteConfirmation(vm.DisplayTime, vm.TargetKelvin))
+                {
+                    _settings.Schedule.Remove(vm.Model);
+                    RefreshList();
+                    DrawCurve();
+                    NotifyChange();
+                }
             }
+        }
+
+        private bool ShowDeleteConfirmation(string displayTime, int kelvin)
+        {
+            var dialog = new Window
+            {
+                Title = "Confirm Delete",
+                Width = 340,
+                Height = 160,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = Window.GetWindow(this),
+                ResizeMode = ResizeMode.NoResize,
+                WindowStyle = WindowStyle.None,
+                AllowsTransparency = true,
+                Background = System.Windows.Media.Brushes.Transparent
+            };
+
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(0x2D, 0x2D, 0x2D)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0x50, 0x50, 0x50)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8)
+            };
+
+            var mainGrid = new Grid();
+            mainGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(36) });
+            mainGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            // Title bar
+            var titleBar = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(0x25, 0x25, 0x25)),
+                CornerRadius = new CornerRadius(8, 8, 0, 0)
+            };
+            var titleText = new TextBlock
+            {
+                Text = "Delete Schedule Point",
+                Foreground = System.Windows.Media.Brushes.White,
+                FontWeight = FontWeights.Medium,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(16, 0, 0, 0)
+            };
+            titleBar.Child = titleText;
+            Grid.SetRow(titleBar, 0);
+            mainGrid.Children.Add(titleBar);
+
+            // Content
+            var content = new StackPanel
+            {
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(20, 12, 20, 12)
+            };
+            content.Children.Add(new TextBlock
+            {
+                Text = $"Delete the schedule point at {displayTime} ({kelvin}K)?",
+                Foreground = System.Windows.Media.Brushes.White,
+                FontSize = 13,
+                TextWrapping = TextWrapping.Wrap
+            });
+            Grid.SetRow(content, 1);
+            mainGrid.Children.Add(content);
+
+            // Buttons
+            bool confirmed = false;
+            var buttonPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(0, 0, 16, 12)
+            };
+
+            var cancelBtn = new Button
+            {
+                Content = "Cancel",
+                Width = 80,
+                Padding = new Thickness(0, 6, 0, 6),
+                Margin = new Thickness(0, 0, 8, 0),
+                Background = new SolidColorBrush(Color.FromRgb(0x44, 0x44, 0x44)),
+                Foreground = System.Windows.Media.Brushes.White,
+                BorderThickness = new Thickness(0),
+                Cursor = Cursors.Hand
+            };
+            cancelBtn.Click += (s, args) => dialog.Close();
+
+            var deleteBtn = new Button
+            {
+                Content = "Delete",
+                Width = 80,
+                Padding = new Thickness(0, 6, 0, 6),
+                Background = new SolidColorBrush(Color.FromRgb(0xC4, 0x2B, 0x1C)),
+                Foreground = System.Windows.Media.Brushes.White,
+                BorderThickness = new Thickness(0),
+                Cursor = Cursors.Hand
+            };
+            deleteBtn.Click += (s, args) => { confirmed = true; dialog.Close(); };
+
+            buttonPanel.Children.Add(cancelBtn);
+            buttonPanel.Children.Add(deleteBtn);
+            Grid.SetRow(buttonPanel, 2);
+            mainGrid.Children.Add(buttonPanel);
+
+            border.Child = mainGrid;
+            dialog.Content = border;
+
+            // Allow dragging by title bar
+            titleBar.MouseLeftButtonDown += (s, args) => dialog.DragMove();
+
+            dialog.ShowDialog();
+            return confirmed;
         }
     }
 
@@ -618,7 +755,9 @@ namespace HDRGammaController
             {
                 if (Model.TriggerType == ScheduleTriggerType.FixedTime)
                 {
-                    if (TimeSpan.TryParse(value, out var t)) Model.Time = t;
+                    var parsed = ParseTimeInput(value);
+                    if (parsed.HasValue)
+                        Model.Time = parsed.Value;
                 }
                 else
                 {
@@ -626,6 +765,47 @@ namespace HDRGammaController
                 }
                 Notify();
             }
+        }
+
+        /// <summary>
+        /// Parses time input flexibly. Accepts formats like:
+        /// "23:00", "2300", "23", "9:30", "930", "9"
+        /// </summary>
+        private static TimeSpan? ParseTimeInput(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input))
+                return null;
+
+            input = input.Trim();
+
+            // Standard format with colon (23:00, 9:30)
+            if (TimeSpan.TryParse(input, out var t))
+                return t;
+
+            // Try parsing as a number
+            if (int.TryParse(input, out int num))
+            {
+                // Single or double digit: treat as hours (e.g., "9" -> 09:00, "23" -> 23:00)
+                if (num >= 0 && num <= 24)
+                {
+                    return TimeSpan.FromHours(num == 24 ? 0 : num);
+                }
+
+                // 3-4 digit format: HHMM or HMM (e.g., "2300" -> 23:00, "930" -> 09:30)
+                if (num >= 100 && num <= 2400)
+                {
+                    int hours = num / 100;
+                    int minutes = num % 100;
+
+                    if (hours >= 0 && hours <= 24 && minutes >= 0 && minutes < 60)
+                    {
+                        if (hours == 24) { hours = 0; }
+                        return new TimeSpan(hours, minutes, 0);
+                    }
+                }
+            }
+
+            return null;
         }
 
         public int TargetKelvin

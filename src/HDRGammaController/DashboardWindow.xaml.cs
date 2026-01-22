@@ -73,7 +73,7 @@ namespace HDRGammaController
             _editingNightMode = _settingsManager.NightMode;
             ScheduleEditor.Initialize(_editingNightMode);
             
-            ScheduleEditor.ScheduleChanged += () => 
+            ScheduleEditor.ScheduleChanged += () =>
             {
                  // Update Settings
                  // We update the local copy then save it

@@ -49,6 +49,12 @@ namespace HDRGammaController.Core
         /// Algorithm to use for color temperature transformation.
         /// </summary>
         public NightModeAlgorithm Algorithm { get; set; } = NightModeAlgorithm.Standard;
+
+        /// <summary>
+        /// Enable enhanced warmth curve below 2800K for more dramatic visual changes.
+        /// When disabled, uses physically accurate color temperatures (subtle at very warm temps).
+        /// </summary>
+        public bool UseUltraWarmMode { get; set; } = false;
         
         /// <summary>
         /// Legacy temperature as -50 to +50 scale. Converts to Kelvin internally.
@@ -159,7 +165,7 @@ namespace HDRGammaController.Core
             // If specific settings changed (like toggle/times), force immediate re-eval
             bool wasEnabled = _settings.Enabled;
             _settings = newSettings;
-            
+
             if (_settings.Enabled && !wasEnabled)
             {
                 Start();
@@ -167,8 +173,15 @@ namespace HDRGammaController.Core
             else
             {
                 // Force an update to catch new times/durations immediately
-                UpdateState(); 
+                UpdateState();
                 ScheduleNextTick();
+
+                // Always re-apply adjustments when settings change
+                // (e.g., UseUltraWarmMode changed but temperature didn't)
+                if (_settings.Enabled)
+                {
+                    ApplyCurrentAdjustments();
+                }
             }
         }
         
@@ -348,9 +361,14 @@ namespace HDRGammaController.Core
             var calibration = new CalibrationSettings
             {
                 Temperature = tempShift,
-                Algorithm = _settings.Algorithm
+                Algorithm = _settings.Algorithm,
+                UseUltraWarmMode = _settings.UseUltraWarmMode
             };
             ApplyAdjustments?.Invoke(calibration);
+
+            // Also fire BlendChanged to trigger ApplyAll() in TrayViewModel
+            // This ensures settings changes (like UseUltraWarmMode) get applied
+            BlendChanged?.Invoke(1.0);
         }
         
         public void Dispose()
