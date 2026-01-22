@@ -273,6 +273,13 @@
             </Setter>
         </Style>
 
+        <!-- Value Display (must be before EditableValue which inherits from it) -->
+        <Style x:Key="ValueDisplay" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="Medium"/>
+            <Setter Property="HorizontalAlignment" Value="Right"/>
+        </Style>
+
         <!-- Clickable Value Display -->
         <Style x:Key="EditableValue" TargetType="TextBlock" BasedOn="{StaticResource ValueDisplay}">
             <Setter Property="Cursor" Value="Hand"/>
@@ -284,7 +291,7 @@
                 </Trigger>
             </Style.Triggers>
         </Style>
-        
+
         <!-- Section Card Style -->
         <Style x:Key="SectionCard" TargetType="Border">
             <Setter Property="Background" Value="{StaticResource CardBackground}"/>
@@ -294,26 +301,19 @@
             <Setter Property="Padding" Value="16"/>
             <Setter Property="Margin" Value="0,0,0,12"/>
         </Style>
-        
+
         <!-- Section Header -->
         <Style x:Key="SectionHeader" TargetType="TextBlock">
             <Setter Property="FontSize" Value="14"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Margin" Value="0,0,0,12"/>
         </Style>
-        
+
         <!-- Label Style -->
         <Style x:Key="FieldLabel" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{StaticResource TextDim}"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Margin" Value="0,8,0,4"/>
-        </Style>
-        
-        <!-- Value Display -->
-        <Style x:Key="ValueDisplay" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="14"/>
-            <Setter Property="FontWeight" Value="Medium"/>
-            <Setter Property="HorizontalAlignment" Value="Right"/>
         </Style>
         
         <!-- Button Style -->
