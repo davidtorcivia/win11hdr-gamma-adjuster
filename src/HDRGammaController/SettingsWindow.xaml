@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:HDRGammaController"
+        xmlns:behaviors="clr-namespace:HDRGammaController.Behaviors"
         Title="HDR Gamma Controller - Settings"
         Width="520" Height="750"
         MinWidth="500" MinHeight="600"
@@ -123,10 +124,165 @@
             <Setter Property="Padding" Value="8,6"/>
         </Style>
         
-        <!-- Styled Slider -->
+        <!-- Styled Slider with optional center tick -->
         <Style x:Key="ModernSlider" TargetType="Slider">
             <Setter Property="Height" Value="24"/>
             <Setter Property="Margin" Value="0,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid>
+                            <!-- Track background -->
+                            <Border Height="4" VerticalAlignment="Center" Background="#3D3D3D" CornerRadius="2"/>
+                            <!-- Center tick mark (only visible for centered sliders) -->
+                            <Rectangle x:Name="CenterTick" Width="2" Height="12" Fill="#555"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       Visibility="Collapsed"/>
+                            <!-- Track with selection -->
+                            <Track x:Name="PART_Track">
+                                <Track.Thumb>
+                                    <Thumb>
+                                        <Thumb.Style>
+                                            <Style TargetType="Thumb">
+                                                <Setter Property="Width" Value="16"/>
+                                                <Setter Property="Height" Value="16"/>
+                                                <Setter Property="Template">
+                                                    <Setter.Value>
+                                                        <ControlTemplate TargetType="Thumb">
+                                                            <Ellipse Fill="{StaticResource AccentBrush}"
+                                                                     Effect="{x:Null}">
+                                                                <Ellipse.Style>
+                                                                    <Style TargetType="Ellipse">
+                                                                        <Style.Triggers>
+                                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                                <Setter Property="Fill" Value="{StaticResource AccentHoverBrush}"/>
+                                                                            </Trigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Ellipse.Style>
+                                                            </Ellipse>
+                                                        </ControlTemplate>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Style>
+                                        </Thumb.Style>
+                                    </Thumb>
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Slider with center detent indicator -->
+        <Style x:Key="CenteredSlider" TargetType="Slider">
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="Margin" Value="0,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid>
+                            <!-- Track background -->
+                            <Border Height="4" VerticalAlignment="Center" Background="#3D3D3D" CornerRadius="2"/>
+                            <!-- Center tick mark -->
+                            <Rectangle Width="2" Height="10" Fill="#666"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       ToolTip="Default: 0"/>
+                            <!-- Track with selection -->
+                            <Track x:Name="PART_Track">
+                                <Track.Thumb>
+                                    <Thumb>
+                                        <Thumb.Style>
+                                            <Style TargetType="Thumb">
+                                                <Setter Property="Width" Value="16"/>
+                                                <Setter Property="Height" Value="16"/>
+                                                <Setter Property="Template">
+                                                    <Setter.Value>
+                                                        <ControlTemplate TargetType="Thumb">
+                                                            <Ellipse Fill="{StaticResource AccentBrush}">
+                                                                <Ellipse.Style>
+                                                                    <Style TargetType="Ellipse">
+                                                                        <Style.Triggers>
+                                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                                <Setter Property="Fill" Value="{StaticResource AccentHoverBrush}"/>
+                                                                            </Trigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Ellipse.Style>
+                                                            </Ellipse>
+                                                        </ControlTemplate>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Style>
+                                        </Thumb.Style>
+                                    </Thumb>
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- RGB Slider with center at 1.0 -->
+        <Style x:Key="RgbSlider" TargetType="Slider">
+            <Setter Property="Height" Value="24"/>
+            <Setter Property="Margin" Value="0,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid>
+                            <Border Height="4" VerticalAlignment="Center" Background="#3D3D3D" CornerRadius="2"/>
+                            <!-- Center tick at 1.0 (50% of 0.5-1.5 range) -->
+                            <Rectangle Width="2" Height="10" Fill="#666"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       ToolTip="Default: 1.0"/>
+                            <Track x:Name="PART_Track">
+                                <Track.Thumb>
+                                    <Thumb>
+                                        <Thumb.Style>
+                                            <Style TargetType="Thumb">
+                                                <Setter Property="Width" Value="16"/>
+                                                <Setter Property="Height" Value="16"/>
+                                                <Setter Property="Template">
+                                                    <Setter.Value>
+                                                        <ControlTemplate TargetType="Thumb">
+                                                            <Ellipse Fill="{StaticResource AccentBrush}">
+                                                                <Ellipse.Style>
+                                                                    <Style TargetType="Ellipse">
+                                                                        <Style.Triggers>
+                                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                                <Setter Property="Fill" Value="{StaticResource AccentHoverBrush}"/>
+                                                                            </Trigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Ellipse.Style>
+                                                            </Ellipse>
+                                                        </ControlTemplate>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Style>
+                                        </Thumb.Style>
+                                    </Thumb>
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Clickable Value Display -->
+        <Style x:Key="EditableValue" TargetType="TextBlock" BasedOn="{StaticResource ValueDisplay}">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="ToolTip" Value="Click to enter value"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+                    <Setter Property="TextDecorations" Value="Underline"/>
+                </Trigger>
+            </Style.Triggers>
         </Style>
         
         <!-- Section Card Style -->
@@ -303,11 +459,15 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <Slider x:Name="TemperatureSlider" Grid.Column="0" Style="{StaticResource ModernSlider}"
+                                    <Slider x:Name="TemperatureSlider" Grid.Column="0" Style="{StaticResource CenteredSlider}"
                                             Minimum="-50" Maximum="50" Value="0"
+                                            behaviors:SliderDetent.IsEnabled="True"
+                                            behaviors:SliderDetent.DetentValue="0"
+                                            behaviors:SliderDetent.SnapThreshold="2"
                                             ValueChanged="TemperatureSlider_ValueChanged"/>
-                                    <TextBlock x:Name="TemperatureValue" Grid.Column="1" Text="0" 
-                                               Style="{StaticResource ValueDisplay}" Width="40"/>
+                                    <TextBlock x:Name="TemperatureValue" Grid.Column="1" Text="0"
+                                               Style="{StaticResource EditableValue}" Width="40"
+                                               behaviors:ClickToEdit.TargetSlider="{Binding ElementName=TemperatureSlider}"/>
                                 </Grid>
                                 <Grid>
                                     <TextBlock Text="Warm" Foreground="{StaticResource TextDim}" FontSize="10"/>
@@ -322,11 +482,15 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <Slider x:Name="TintSlider" Grid.Column="0" Style="{StaticResource ModernSlider}"
+                                    <Slider x:Name="TintSlider" Grid.Column="0" Style="{StaticResource CenteredSlider}"
                                             Minimum="-50" Maximum="50" Value="0"
+                                            behaviors:SliderDetent.IsEnabled="True"
+                                            behaviors:SliderDetent.DetentValue="0"
+                                            behaviors:SliderDetent.SnapThreshold="2"
                                             ValueChanged="TintSlider_ValueChanged"/>
-                                    <TextBlock x:Name="TintValue" Grid.Column="1" Text="0" 
-                                               Style="{StaticResource ValueDisplay}" Width="40"/>
+                                    <TextBlock x:Name="TintValue" Grid.Column="1" Text="0"
+                                               Style="{StaticResource EditableValue}" Width="40"
+                                               behaviors:ClickToEdit.TargetSlider="{Binding ElementName=TintSlider}"/>
                                 </Grid>
                                 <Grid>
                                     <TextBlock Text="Green" Foreground="{StaticResource TextDim}" FontSize="10"/>
@@ -357,11 +521,15 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <Slider x:Name="TempOffsetSlider" Grid.Column="0" Style="{StaticResource ModernSlider}"
+                                    <Slider x:Name="TempOffsetSlider" Grid.Column="0" Style="{StaticResource CenteredSlider}"
                                             Minimum="-20" Maximum="20" Value="0"
+                                            behaviors:SliderDetent.IsEnabled="True"
+                                            behaviors:SliderDetent.DetentValue="0"
+                                            behaviors:SliderDetent.SnapThreshold="1"
                                             ValueChanged="TempOffsetSlider_ValueChanged"/>
-                                    <TextBlock x:Name="TempOffsetValue" Grid.Column="1" Text="0" 
-                                               Style="{StaticResource ValueDisplay}" Width="40"/>
+                                    <TextBlock x:Name="TempOffsetValue" Grid.Column="1" Text="0"
+                                               Style="{StaticResource EditableValue}" Width="40"
+                                               behaviors:ClickToEdit.TargetSlider="{Binding ElementName=TempOffsetSlider}"/>
                                 </Grid>
                                 <Grid>
                                     <TextBlock Text="Warmer" Foreground="{StaticResource TextDim}" FontSize="10"/>
@@ -384,13 +552,17 @@
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <Slider x:Name="RedGainSlider" Grid.Column="0" Style="{StaticResource ModernSlider}"
+                                        <Slider x:Name="RedGainSlider" Grid.Column="0" Style="{StaticResource RgbSlider}"
                                                 Minimum="0.5" Maximum="1.5" Value="1.0" TickFrequency="0.01"
+                                                behaviors:SliderDetent.IsEnabled="True"
+                                                behaviors:SliderDetent.DetentValue="1.0"
+                                                behaviors:SliderDetent.SnapThreshold="0.03"
                                                 ValueChanged="RgbSlider_ValueChanged"/>
-                                        <TextBlock x:Name="RedGainValue" Grid.Column="1" Text="1.00" 
-                                                   Style="{StaticResource ValueDisplay}" Width="40"/>
+                                        <TextBlock x:Name="RedGainValue" Grid.Column="1" Text="1.00"
+                                                   Style="{StaticResource EditableValue}" Width="40"
+                                                   behaviors:ClickToEdit.TargetSlider="{Binding ElementName=RedGainSlider}"/>
                                     </Grid>
-                                    
+
                                     <!-- Green -->
                                     <TextBlock Text="Green Gain" Style="{StaticResource FieldLabel}"/>
                                     <Grid>
@@ -398,13 +570,17 @@
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <Slider x:Name="GreenGainSlider" Grid.Column="0" Style="{StaticResource ModernSlider}"
+                                        <Slider x:Name="GreenGainSlider" Grid.Column="0" Style="{StaticResource RgbSlider}"
                                                 Minimum="0.5" Maximum="1.5" Value="1.0" TickFrequency="0.01"
+                                                behaviors:SliderDetent.IsEnabled="True"
+                                                behaviors:SliderDetent.DetentValue="1.0"
+                                                behaviors:SliderDetent.SnapThreshold="0.03"
                                                 ValueChanged="RgbSlider_ValueChanged"/>
-                                        <TextBlock x:Name="GreenGainValue" Grid.Column="1" Text="1.00" 
-                                                   Style="{StaticResource ValueDisplay}" Width="40"/>
+                                        <TextBlock x:Name="GreenGainValue" Grid.Column="1" Text="1.00"
+                                                   Style="{StaticResource EditableValue}" Width="40"
+                                                   behaviors:ClickToEdit.TargetSlider="{Binding ElementName=GreenGainSlider}"/>
                                     </Grid>
-                                    
+
                                     <!-- Blue -->
                                     <TextBlock Text="Blue Gain" Style="{StaticResource FieldLabel}"/>
                                     <Grid>
@@ -412,11 +588,15 @@
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <Slider x:Name="BlueGainSlider" Grid.Column="0" Style="{StaticResource ModernSlider}"
+                                        <Slider x:Name="BlueGainSlider" Grid.Column="0" Style="{StaticResource RgbSlider}"
                                                 Minimum="0.5" Maximum="1.5" Value="1.0" TickFrequency="0.01"
+                                                behaviors:SliderDetent.IsEnabled="True"
+                                                behaviors:SliderDetent.DetentValue="1.0"
+                                                behaviors:SliderDetent.SnapThreshold="0.03"
                                                 ValueChanged="RgbSlider_ValueChanged"/>
-                                        <TextBlock x:Name="BlueGainValue" Grid.Column="1" Text="1.00" 
-                                                   Style="{StaticResource ValueDisplay}" Width="40"/>
+                                        <TextBlock x:Name="BlueGainValue" Grid.Column="1" Text="1.00"
+                                                   Style="{StaticResource EditableValue}" Width="40"
+                                                   behaviors:ClickToEdit.TargetSlider="{Binding ElementName=BlueGainSlider}"/>
                                     </Grid>
                                     
                                     <Button Content="Reset RGB" Style="{StaticResource ModernButton}" 
