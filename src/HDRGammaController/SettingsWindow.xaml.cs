@@ -4,6 +4,8 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
+using System.Collections.ObjectModel;
+using System.Linq;
 using HDRGammaController.Core;
 
 namespace HDRGammaController
@@ -20,6 +22,9 @@ namespace HDRGammaController
         private MonitorProfileData? _savedProfile; // Last saved profile for compare
         private NightModeSettings _currentNightMode;
         private Dictionary<string, MonitorProfileData> _pendingChanges = new();
+        // ExcludedApps removed
+        
+        // Debounce timer for live preview
         
         // Debounce timer for live preview
         private DispatcherTimer? _previewTimer;
@@ -180,49 +185,12 @@ namespace HDRGammaController
             BlueGainSlider.Value = _currentProfile.BlueGain;
             BlueGainValue.Text = $"{_currentProfile.BlueGain:F2}";
             
-            // Night Mode (Global)
-            // Load fresh copy into our editing instance
+            // Start Per-Monitor Offset Logic (Global managed in Dashboard)
             _currentNightMode = _settingsManager.NightMode;
-            NightModeEnabled.IsChecked = _currentNightMode.Enabled;
-            
-            // Initialize Grid
-            ScheduleEditor.Initialize(_currentNightMode);
-            ScheduleEditor.ScheduleChanged += () => 
-            {
-                 // Live preview without saving to disk
-                 _settingsManager.NotifyNightModeChanged(_currentNightMode); 
-            };
-            ScheduleEditor.PreviewTemperatureRequested += (kelvin) =>
-            {
-                if (kelvin.HasValue)
-                {
-                    PreviewNightTemperature(kelvin.Value);
-                }
-                else
-                {
-                    // Restore schedule logic
-                    _settingsManager.NotifyNightModeChanged(_currentNightMode);
-                    
-                    // Force re-apply of current scheduled state for all monitors
-                    foreach (var monitor in _monitors)
-                    {
-                        // Pass null override to use Service's scheduled value
-                        _applyCallback?.Invoke(monitor, monitor.CurrentGamma, null, null);
-                    }
-                }
-            };
-            
-            UpdateNightModeOptionsVisibility();
+            // No Schedule Logic here
         }
         
-        private void UpdateNightModeOptionsVisibility()
-        {
-            bool enabled = NightModeEnabled.IsChecked == true;
-            if (ScheduleEditor != null)
-            {
-                ScheduleEditor.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
-            }
-        }
+        private void UpdateNightModeOptionsVisibility() { }
         
         private void ScheduleLivePreview()
         {
@@ -287,26 +255,7 @@ namespace HDRGammaController
             ScheduleLivePreview();
         }
 
-        private void PreviewNightTemperature(int kelvin)
-        {
-            // Convert Kelvin to temperature shift for preview
-            double tempShift = (kelvin - 6500) / 70.0;
-            // Use current algorithm from settings
-            var algorithm = _currentNightMode?.Algorithm ?? NightModeAlgorithm.Standard;
-            
-            foreach (var monitor in _monitors)
-            {
-                var profile = _settingsManager.GetMonitorProfile(monitor.MonitorDevicePath);
-                var calibration = profile?.ToCalibrationSettings() ?? new CalibrationSettings();
-                // Pass base calibration (profile) + Height override
-                // Night mode will be calculated by RequestApply using 'kelvin'
-                
-                _applyCallback?.Invoke(monitor, 
-                    profile?.GammaMode ?? monitor.CurrentGamma, 
-                    calibration,
-                    kelvin);
-            }
-        }
+        // PreviewNightTemperature Removed
         
 
         
@@ -324,16 +273,7 @@ namespace HDRGammaController
             ScheduleLivePreview();
         }
         
-        private void NightModeEnabled_Changed(object sender, RoutedEventArgs e)
-        {
-            UpdateNightModeOptionsVisibility();
-            if (_currentNightMode != null)
-            {
-                _currentNightMode.Enabled = NightModeEnabled.IsChecked == true;
-                // Live preview, don't save to disk yet (wait for Save button)
-                 _settingsManager.NotifyNightModeChanged(_currentNightMode);
-            }
-        }
+        // NightModeEnabled_Changed Removed
         
         private void GammaModeCombo_Changed(object sender, SelectionChangedEventArgs e)
         {
@@ -377,6 +317,8 @@ namespace HDRGammaController
             ScheduleLivePreview();
         }
         
+        // Add/Remove ExcludedApp Removed
+
         private void Compare_MouseDown(object sender, MouseButtonEventArgs e)
         {
             // Apply last saved settings while holding
@@ -432,12 +374,9 @@ namespace HDRGammaController
             }
             
             // Night Mode
-            // Use the instance we've been editing
-            if (_currentNightMode != null)
-            {
-                _currentNightMode.Enabled = NightModeEnabled.IsChecked == true;
-                _settingsManager.SetNightMode(_currentNightMode);
-            }
+             // Night Mode (Global) - handled in Dashboard now
+             // _currentNightMode is loaded but we don't save it from here unless we add back properties
+             // But we do save Per-Monitor Offset which is in Profile.
             
             // Apply all monitors that have pending changes
             foreach (var kvp in _pendingChanges)

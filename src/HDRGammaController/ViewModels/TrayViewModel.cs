@@ -28,6 +28,10 @@ namespace HDRGammaController.ViewModels
         private int _panicId = -1;
         private int _nightModeToggleId = -1;
         private bool _nightModeManuallyDisabled = false;
+        
+        private readonly AppDetectionService _appDetectionService;
+        private HashSet<IntPtr> _blockedMonitors = new HashSet<IntPtr>();
+        private List<MonitorInfo> _activeMonitors = new List<MonitorInfo>();
 
         private Dictionary<string, MonitorInfo> _savedConfigs = new Dictionary<string, MonitorInfo>();
 
@@ -57,6 +61,11 @@ namespace HDRGammaController.ViewModels
             
             // Start service
             _nightModeService.Start();
+            
+            // App Detection
+            _appDetectionService = new AppDetectionService();
+            _appDetectionService.ForegroundAppChanged += OnForegroundAppChanged;
+            _appDetectionService.Start();
 
             // Assumes template is in the same directory (needs to be sourced by user)
             string profileTemplatePath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "srgb_to_gamma2p2_100_mhc2.icm");
@@ -166,6 +175,57 @@ namespace HDRGammaController.ViewModels
             RefreshMonitors();
             ApplyAll();
         }
+        
+        private void OnForegroundAppChanged(string appName, Dxgi.RECT? appBounds)
+        {
+            try 
+            {
+                // Check if app is in exclusion list
+                var rule = _settingsManager.ExcludedApps.FirstOrDefault(r => r.AppName.Equals(appName, StringComparison.OrdinalIgnoreCase));
+                
+                var newBlocked = new HashSet<IntPtr>();
+
+                if (rule != null)
+                {
+                    if (rule.FullDisable)
+                    {
+                        // Block ALL active monitors
+                        foreach(var m in _activeMonitors) newBlocked.Add(m.HMonitor);
+                    }
+                    else if (appBounds.HasValue)
+                    {
+                        // Smart Mode: Block intersecting
+                        var r1 = appBounds.Value;
+                        foreach (var monitor in _activeMonitors)
+                        {
+                            var r2 = monitor.MonitorBounds;
+                            bool intersects = r1.Left < r2.Right && r2.Left < r1.Right &&
+                                              r1.Top < r2.Bottom && r2.Top < r1.Bottom;
+                            if (intersects) newBlocked.Add(monitor.HMonitor);
+                        }
+                    }
+                    else
+                    {
+                        // Excluded but no bounds? Maybe block primary or all? 
+                        // Let's safe fallback to all if we can't detect bounds (e.g. minimized but active?)
+                        // Or maybe just Ignore.
+                        // For now, if no bounds, we assume it's not effectively on screen or we can't decide.
+                    }
+                }
+                
+                // Diff check to avoid spamming updates
+                if (!_blockedMonitors.SetEquals(newBlocked))
+                {
+                    _blockedMonitors = newBlocked;
+                    Console.WriteLine($"TrayViewModel: Block state changed. App={appName}, Blocked Count={_blockedMonitors.Count}");
+                    Application.Current.Dispatcher.Invoke(() => ApplyAll());
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in OnForegroundAppChanged: {ex.Message}");
+            }
+        }
 
         public async void HandleResume()
         {
@@ -187,6 +247,13 @@ namespace HDRGammaController.ViewModels
              // Use override if provided (during drag preview), else service's kelvin
             int currentKelvin = nightKelvinOverride ?? _nightModeService.CurrentNightKelvin;
             if (_nightModeManuallyDisabled) currentKelvin = 6500;
+            
+            // Check for App Exclusion Block
+            if (_blockedMonitors.Contains(monitor.HMonitor))
+            {
+                currentKelvin = 6500;
+            }
+
             // Force active if override provided (to ensure preview works even if service is at 6500)
             bool nightModeActive = nightKelvinOverride.HasValue || currentKelvin < 6450;
             
@@ -300,7 +367,8 @@ namespace HDRGammaController.ViewModels
         {
             Console.WriteLine("TrayViewModel: Refreshing monitors...");
             TrayItems.Clear();
-            var monitors = _monitorManager.EnumerateMonitors();
+            _activeMonitors = _monitorManager.EnumerateMonitors();
+            var monitors = _activeMonitors;
             Console.WriteLine($"TrayViewModel: Enumerated {monitors.Count} monitors.");
             
             if (monitors.Count == 0)

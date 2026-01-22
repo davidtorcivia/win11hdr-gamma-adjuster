@@ -9,6 +9,15 @@ namespace HDRGammaController.Core
     /// <summary>
     /// Per-monitor profile data stored in settings.
     /// </summary>
+    public class AppExclusionRule
+    {
+        public string AppName { get; set; } = string.Empty;
+        public bool FullDisable { get; set; } = false;
+    }
+
+    /// <summary>
+    /// Per-monitor profile data stored in settings.
+    /// </summary>
     public class MonitorProfileData
     {
         public GammaMode GammaMode { get; set; } = GammaMode.Gamma22;
@@ -153,9 +162,43 @@ namespace HDRGammaController.Core
                     string json = File.ReadAllText(SettingsFilePath);
                     var options = new JsonSerializerOptions 
                     { 
-                        Converters = { new JsonStringEnumConverter() }
+                        Converters = { new JsonStringEnumConverter() },
+                        PropertyNameCaseInsensitive = true
                     };
-                    _data = JsonSerializer.Deserialize<SettingsData>(json, options) ?? new SettingsData();
+
+                    try
+                    {
+                        _data = JsonSerializer.Deserialize<SettingsData>(json, options) ?? new SettingsData();
+                        ValidateAndClampSettings(_data);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Fallback: Try defining a legacy structure or just reset ExcludedApps
+                        Console.WriteLine($"SettingsManager: Primary deserialization failed ({ex.Message}), attempting legacy migration...");
+                        try 
+                        {
+                            var legacy = JsonSerializer.Deserialize<LegacySettingsData>(json, options);
+                            if (legacy != null)
+                            {
+                                _data = new SettingsData 
+                                {
+                                    MonitorProfiles = legacy.MonitorProfiles,
+                                    NightMode = legacy.NightMode,
+                                    ExcludedApps = legacy.ExcludedApps?.Select(path => new AppExclusionRule { AppName = path, FullDisable = false }).ToList() ?? new List<AppExclusionRule>()
+                                };
+                                Console.WriteLine("SettingsManager: Legacy migration successful.");
+                                Save(); // Save immediately in new format
+                            }
+                        }
+                        catch (Exception innerEx)
+                        {
+                            Console.WriteLine($"SettingsManager: Legacy migration failed ({innerEx.Message}). Using defaults.");
+                            // Backup corrupted file
+                            try { File.Copy(SettingsFilePath, SettingsFilePath + $".bak-{DateTime.Now.Ticks}", true); } catch { }
+                            _data = new SettingsData();
+                        }
+                    }
+                    
                     Console.WriteLine($"SettingsManager: Loaded {_data.MonitorProfiles.Count} monitor profiles.");
                 }
             }
@@ -238,10 +281,94 @@ namespace HDRGammaController.Core
             NightModeChanged?.Invoke(settings);
         }
 
+        public List<AppExclusionRule> ExcludedApps => _data.ExcludedApps;
+
+        public void SetExcludedApps(List<AppExclusionRule> apps)
+        {
+            _data.ExcludedApps = apps ?? new List<AppExclusionRule>();
+            Save();
+        }
+
+        /// <summary>
+        /// Validates and clamps all settings to safe ranges to prevent malicious/corrupted values.
+        /// </summary>
+        private static void ValidateAndClampSettings(SettingsData data)
+        {
+            if (data == null) return;
+
+            // Validate monitor profiles
+            foreach (var profile in data.MonitorProfiles.Values)
+            {
+                if (profile == null) continue;
+
+                // Brightness: 10-100%
+                profile.Brightness = Math.Clamp(profile.Brightness, 10.0, 100.0);
+
+                // Temperature offset: -50 to +50
+                profile.Temperature = Math.Clamp(profile.Temperature, -50.0, 50.0);
+                profile.TemperatureOffset = Math.Clamp(profile.TemperatureOffset, -50.0, 50.0);
+
+                // Tint: -50 to +50
+                profile.Tint = Math.Clamp(profile.Tint, -50.0, 50.0);
+
+                // RGB Gains: 0.5 to 1.5
+                profile.RedGain = Math.Clamp(profile.RedGain, 0.5, 1.5);
+                profile.GreenGain = Math.Clamp(profile.GreenGain, 0.5, 1.5);
+                profile.BlueGain = Math.Clamp(profile.BlueGain, 0.5, 1.5);
+
+                // RGB Offsets: -0.5 to +0.5
+                profile.RedOffset = Math.Clamp(profile.RedOffset, -0.5, 0.5);
+                profile.GreenOffset = Math.Clamp(profile.GreenOffset, -0.5, 0.5);
+                profile.BlueOffset = Math.Clamp(profile.BlueOffset, -0.5, 0.5);
+            }
+
+            // Validate night mode settings
+            var nm = data.NightMode;
+            if (nm != null)
+            {
+                // Latitude: -90 to +90
+                if (nm.Latitude.HasValue)
+                    nm.Latitude = Math.Clamp(nm.Latitude.Value, -90.0, 90.0);
+
+                // Longitude: -180 to +180
+                if (nm.Longitude.HasValue)
+                    nm.Longitude = Math.Clamp(nm.Longitude.Value, -180.0, 180.0);
+
+                // Temperature: 1900K to 6500K (valid color temperature range)
+                nm.TemperatureKelvin = Math.Clamp(nm.TemperatureKelvin, 1900, 6500);
+
+                // Fade duration: 0 to 120 minutes
+                nm.FadeMinutes = Math.Clamp(nm.FadeMinutes, 0, 120);
+
+                // Validate schedule points
+                if (nm.Schedule != null)
+                {
+                    foreach (var point in nm.Schedule)
+                    {
+                        if (point == null) continue;
+                        // Clamp TargetKelvin to valid range
+                        point.TargetKelvin = Math.Clamp(point.TargetKelvin, 1900, 6500);
+                        // Clamp FadeMinutes to valid range
+                        point.FadeMinutes = Math.Clamp(point.FadeMinutes, 0, 120);
+                        // Clamp OffsetMinutes to reasonable range (-120 to +120)
+                        point.OffsetMinutes = Math.Clamp(point.OffsetMinutes, -120.0, 120.0);
+                    }
+                }
+            }
+        }
+
         private class SettingsData
         {
             public Dictionary<string, MonitorProfileData> MonitorProfiles { get; set; } = new Dictionary<string, MonitorProfileData>();
             public NightModeSettingsData NightMode { get; set; } = new NightModeSettingsData();
+            public List<AppExclusionRule> ExcludedApps { get; set; } = new List<AppExclusionRule>();
+        }
+
+        private class LegacySettingsData
+        {
+            public Dictionary<string, MonitorProfileData> MonitorProfiles { get; set; } = new Dictionary<string, MonitorProfileData>();
+            public NightModeSettingsData NightMode { get; set; } = new NightModeSettingsData();
+            public List<string> ExcludedApps { get; set; } = new List<string>();
         }
     }
 }

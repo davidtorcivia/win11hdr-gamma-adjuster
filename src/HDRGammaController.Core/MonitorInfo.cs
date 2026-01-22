@@ -38,5 +38,6 @@ namespace HDRGammaController.Core
         public Dxgi.LUID AdapterLuid { get; set; }
         public uint OutputId { get; set; } // Index in EnumOutputs
         public IntPtr HMonitor { get; set; }
+        public Dxgi.RECT MonitorBounds { get; set; }
     }
 }

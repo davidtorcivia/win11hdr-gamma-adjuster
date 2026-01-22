@@ -145,12 +145,11 @@ namespace HDRGammaController.Core
             gL = Math.Clamp(gL, 0, 1);
             bL = Math.Clamp(bL, 0, 1);
 
-            // Gamma Correct (Linear -> sRGB)
-            // Using standard sRGB gamma approximation (power 1/2.2) or precise Transfer Function
-            // Simple power is usually sufficient for this context
-            double r = Math.Pow(rL, 1.0 / 2.2);
-            double g = Math.Pow(gL, 1.0 / 2.2);
-            double b = Math.Pow(bL, 1.0 / 2.2);
+            // Gamma Correct (Linear -> sRGB) using proper sRGB transfer function
+            // IEC 61966-2-1:1999 specifies piecewise function, not simple 1/2.2 power
+            double r = LinearToSrgb(rL);
+            double g = LinearToSrgb(gL);
+            double b = LinearToSrgb(bL);
 
             // Normalize to Max=1 to preserve brightness
             double max = Math.Max(r, Math.Max(g, b));
@@ -172,17 +171,35 @@ namespace HDRGammaController.Core
         {
             // Map Kelvin 6500 -> 1900 to Factor 0.0 -> 1.0
             double factor = Math.Clamp((6500.0 - kelvin) / (6500.0 - 1900.0), 0.0, 1.0);
-            
+
             // Linear reduction
             // Blue: 1.0 -> 0.1 (Aggressive cut)
             // Green: 1.0 -> 0.7 (Mild cut to warm up)
             // Red: 1.0 (Preserve)
-            
+
             double r = 1.0;
             double g = 1.0 - (factor * 0.3);
             double b = 1.0 - (factor * 0.9);
-            
+
             return (r, g, b);
+        }
+
+        /// <summary>
+        /// Converts linear RGB value to sRGB using the proper IEC 61966-2-1:1999 transfer function.
+        /// Uses piecewise function with linear portion for small values.
+        /// </summary>
+        private static double LinearToSrgb(double linear)
+        {
+            // IEC 61966-2-1:1999 sRGB transfer function
+            // Threshold: 0.0031308
+            if (linear <= 0.0031308)
+            {
+                return 12.92 * linear;
+            }
+            else
+            {
+                return 1.055 * Math.Pow(linear, 1.0 / 2.4) - 0.055;
+            }
         }
 
         /// <summary>

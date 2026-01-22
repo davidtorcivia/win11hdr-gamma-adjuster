@@ -121,6 +121,7 @@ namespace HDRGammaController.Core
         private NightModeSettings _settings;
         private double _currentBlend = 0.0; // 0 = day mode, 1 = full night mode
         private bool _isTransitioning = false;
+        private DateTime? _pauseUntil = null;
         
         /// <summary>
         /// Fired when the night mode blend factor changes (for real-time UI updates).
@@ -145,6 +146,12 @@ namespace HDRGammaController.Core
             _timer = new System.Timers.Timer(1000); 
             _timer.AutoReset = false;
             _timer.Elapsed += OnTimerElapsed;
+        }
+
+        public void PauseUntil(DateTime until)
+        {
+            _pauseUntil = until;
+            UpdateState(); // Immediate apply
         }
         
         public void UpdateSettings(NightModeSettings newSettings)
@@ -198,13 +205,18 @@ namespace HDRGammaController.Core
         {
             if (!_settings.Enabled)
             {
-                if (_currentNightKelvin != 6500)
-                {
-                    _currentNightKelvin = 6500;
-                    BlendChanged?.Invoke(0); // Legacy blend support (0=Day)
-                    ApplyCurrentAdjustments();
-                }
+                ForceDayMode();
                 return;
+            }
+
+            if (_pauseUntil.HasValue)
+            {
+                if (DateTime.Now < _pauseUntil.Value)
+                {
+                    ForceDayMode();
+                    return;
+                }
+                _pauseUntil = null; // Expired
             }
             
             _settings.EnsureSchedule(_settings.Latitude, _settings.Longitude);
@@ -314,6 +326,16 @@ namespace HDRGammaController.Core
             
             // Otherwise we have arrived
             return endKelvin;
+        }
+
+        private void ForceDayMode()
+        {
+            if (_currentNightKelvin != 6500)
+            {
+                _currentNightKelvin = 6500;
+                BlendChanged?.Invoke(0); // Legacy blend support (0=Day)
+                ApplyCurrentAdjustments();
+            }
         }
 
         private void ApplyCurrentAdjustments()

@@ -33,7 +33,7 @@
             <RowDefinition Height="Auto"/> <!-- Title/Summary -->
             <RowDefinition Height="180"/>  <!-- Graph -->
             <RowDefinition Height="Auto"/> <!-- Toolbar -->
-            <RowDefinition Height="*"/>    <!-- List -->
+            <RowDefinition Height="Auto"/>    <!-- List -->
         </Grid.RowDefinitions>
 
         <!-- Summary and Location -->
@@ -62,7 +62,8 @@
         <!-- Graph Container -->
         <Border Grid.Row="1" Background="#222" BorderBrush="#444" BorderThickness="1" CornerRadius="4" Margin="0,0,0,8">
             <Grid>
-                 <Canvas x:Name="GraphCanvas" ClipToBounds="True" Background="Transparent" 
+                 <Canvas x:Name="GridCanvas" IsHitTestVisible="False"/>
+                 <Canvas x:Name="CurveCanvas" ClipToBounds="True" Background="Transparent" 
                         MouseLeftButtonDown="GraphCanvas_MouseDown"
                         MouseMove="GraphCanvas_MouseMove"
                         MouseLeftButtonUp="GraphCanvas_MouseUp"

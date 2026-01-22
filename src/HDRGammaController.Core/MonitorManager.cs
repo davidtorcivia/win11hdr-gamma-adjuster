@@ -111,11 +111,16 @@ namespace HDRGammaController.Core
 
                         // QueryInterface for Output6 (HDR)
                         Dxgi.IDXGIOutput6? output6 = null;
-                        try {
+                        try
+                        {
                             // If we have pOutput, we can get object
                             object? outObj = Marshal.GetObjectForIUnknown(pOutput);
                             output6 = outObj as Dxgi.IDXGIOutput6;
-                        } catch {}
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"MonitorManager: Failed to get IDXGIOutput6 for output {outputIndex}: {ex.Message}");
+                        }
 
                         if (output6 != null)
                         {
@@ -129,7 +134,8 @@ namespace HDRGammaController.Core
                                 OutputId = outputIndex,
                                 HMonitor = desc1.Monitor,
                                 IsHdrCapable = (desc1.ColorSpace == Dxgi.DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020),
-                                IsHdrActive = (desc1.ColorSpace == Dxgi.DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020)
+                                IsHdrActive = (desc1.ColorSpace == Dxgi.DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020),
+                                MonitorBounds = desc1.DesktopCoordinates
                             };
 
                             EnrichWithGdiData(monitorInfo);
@@ -266,38 +272,52 @@ namespace HDRGammaController.Core
             // Detailed timing descriptors start at byte 54
             // Each descriptor is 18 bytes
             // Descriptor type 0xFC = Monitor name
-            
-            if (edid.Length < 128) return null;
-            
+
+            // SECURITY: Validate minimum EDID size before any access
+            if (edid == null || edid.Length < 128) return null;
+
             // Check for valid EDID header
             if (edid[0] != 0x00 || edid[1] != 0xFF || edid[2] != 0xFF || edid[3] != 0xFF ||
                 edid[4] != 0xFF || edid[5] != 0xFF || edid[6] != 0xFF || edid[7] != 0x00)
             {
                 return null;
             }
-            
+
             // Search through the 4 descriptor blocks (starting at offsets 54, 72, 90, 108)
             for (int offset = 54; offset <= 108; offset += 18)
             {
+                // SECURITY: Bounds check - ensure we won't read past end of array
+                // We need to access offset+5 through offset+17 (13 bytes of name data)
+                if (offset + 18 > edid.Length)
+                {
+                    Console.WriteLine($"MonitorManager: EDID too short for descriptor at offset {offset}");
+                    break;
+                }
+
                 // Check if this is a text descriptor (bytes 0-3 are 0x00, byte 3 is descriptor type)
-                if (edid[offset] == 0x00 && edid[offset + 1] == 0x00 && 
+                if (edid[offset] == 0x00 && edid[offset + 1] == 0x00 &&
                     edid[offset + 2] == 0x00 && edid[offset + 3] == 0xFC)
                 {
                     // Bytes 5-17 contain the monitor name (13 characters max)
-                    var nameBytes = new byte[13];
-                    Array.Copy(edid, offset + 5, nameBytes, 0, 13);
-                    
+                    // SECURITY: Calculate safe copy length
+                    int nameStartOffset = offset + 5;
+                    int maxCopyLen = Math.Min(13, edid.Length - nameStartOffset);
+                    if (maxCopyLen <= 0) continue;
+
+                    var nameBytes = new byte[maxCopyLen];
+                    Array.Copy(edid, nameStartOffset, nameBytes, 0, maxCopyLen);
+
                     string name = Encoding.ASCII.GetString(nameBytes);
-                    // Trim trailing newlines and spaces
-                    name = name.TrimEnd('\n', '\r', ' ');
-                    
+                    // Trim trailing newlines, spaces, and null characters
+                    name = name.TrimEnd('\n', '\r', ' ', '\0');
+
                     if (!string.IsNullOrWhiteSpace(name))
                     {
                         return name;
                     }
                 }
             }
-            
+
             return null;
         }
     }

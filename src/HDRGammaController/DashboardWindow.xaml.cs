@@ -1,20 +1,47 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
+using System.Diagnostics;
+using System.Threading.Tasks;
 using HDRGammaController.Core;
+using HDRGammaController.ViewModels;
+
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
 
 namespace HDRGammaController
 {
-    public partial class DashboardWindow : Window
+    public partial class DashboardWindow : Window, INotifyPropertyChanged
     {
         private readonly MonitorManager _monitorManager;
         private readonly SettingsManager _settingsManager;
         private readonly NightModeService _nightModeService;
         private readonly Action<MonitorInfo, GammaMode, CalibrationSettings?, int?> _applyCallback;
+        private ObservableCollection<AppExclusionRule> _excludedApps;
+        private NightModeSettings _editingNightMode;
+        
+        public event PropertyChangedEventHandler? PropertyChanged;
+        
+        public bool IsNightModeEnabled
+        {
+            get => _settingsManager.NightMode.Enabled;
+            set
+            {
+                // We update settings via manager, then notify
+                // But SettingsManager updates are separate.
+                // We'll update the display when refreshing monitors or manual trigger
+                OnPropertyChanged(nameof(IsNightModeEnabled));
+            }
+        }
+
+        protected void OnPropertyChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+
         
         public DashboardWindow(
             MonitorManager monitorManager, 
@@ -31,13 +58,45 @@ namespace HDRGammaController
             // Re-refresh when simple blend changes (for live update)
             _nightModeService.BlendChanged += (val) => Dispatcher.Invoke(RefreshMonitors);
 
+            // Init App Exclusion
+            _excludedApps = new ObservableCollection<AppExclusionRule>(_settingsManager.ExcludedApps);
+            
+            DataContext = this;
+            
+            // Init Schedule Editor (Global Settings)
+            _editingNightMode = _settingsManager.NightMode;
+            ScheduleEditor.Initialize(_editingNightMode);
+            
+            ScheduleEditor.ScheduleChanged += () => 
+            {
+                 // Update Settings
+                 // We update the local copy then save it
+                 _settingsManager.SetNightMode(_editingNightMode);
+                 // Note: this triggers RefreshMonitors via NightModeService event if active
+            };
+            
+            ScheduleEditor.PreviewTemperatureRequested += async (kelvin) =>
+            {
+                // Offload heavy gamma ramp application
+                await Task.Run(() => 
+                {
+                    var monitors = _monitorManager.EnumerateMonitors();
+                    foreach(var m in monitors)
+                    {
+                        var profile = _settingsManager.GetMonitorProfile(m.MonitorDevicePath);
+                        var cal = profile?.ToCalibrationSettings() ?? new CalibrationSettings();
+                        _applyCallback(m, profile?.GammaMode ?? m.CurrentGamma, cal, kelvin);
+                    }
+                });
+            };
+
             RefreshMonitors();
         }
         
         private void RefreshMonitors()
         {
             var monitors = _monitorManager.EnumerateMonitors();
-            var items = new List<DashboardItem>();
+            var items = new List<object>(); // Heterogeneous list
             
             // Night mode data
             int nightKelvin = _nightModeService.CurrentNightKelvin;
@@ -79,18 +138,50 @@ namespace HDRGammaController
                 });
             }
             
+            // Add App Exclusion Card
+            var appItem = new AppExclusionItem
+            {
+                ExcludedApps = _excludedApps,
+                // RunningApps is init empty
+            };
+            items.Add(appItem);
+            
+            // Async load running apps
+            LoadRunningApps(appItem);
+            
             MonitorList.ItemsSource = items;
         }
-        
-        public class DashboardItem
+
+        private void LoadRunningApps(AppExclusionItem item)
         {
-            public MonitorInfo Model { get; set; } = new MonitorInfo();
-            public string FriendlyName { get; set; } = "";
-            public string BadgeText { get; set; } = "";
-            public Brush BadgeColor { get; set; } = Brushes.Gray;
-            public GammaMode CurrentGamma { get; set; }
-            public double CurrentBrightness { get; set; }
-            public string CurrentTemperatureText { get; set; } = "";
+            Task.Run(() => 
+            {
+                var apps = GetRunningApps();
+                Dispatcher.Invoke(() => 
+                {
+                    item.RunningApps.Clear();
+                    foreach(var app in apps) item.RunningApps.Add(app);
+                });
+            });
+        }
+
+        private List<string> GetRunningApps()
+        {
+            try 
+            {
+                return Process.GetProcesses()
+                    .Where(p => p.MainWindowHandle != IntPtr.Zero && !string.IsNullOrEmpty(p.MainWindowTitle))
+                    .Select(p => 
+                    {
+                        try { return p.ProcessName.ToLowerInvariant() + ".exe"; } 
+                        catch { return null; }
+                    })
+                    .Where(n => !string.IsNullOrEmpty(n))
+                    .Distinct()
+                    .OrderBy(n => n)
+                    .ToList();
+            }
+            catch { return new List<string>(); }
         }
 
         private void TitleBar_MouseDown(object sender, MouseButtonEventArgs e)
@@ -115,8 +206,7 @@ namespace HDRGammaController
                 if (sender is Button btn && btn.Tag is DashboardItem item)
                 {
                     // Open SettingsWindow for this monitor
-                    // We need to pass all monitors to it so the selector works
-                    var allMonitors = (MonitorList.ItemsSource as List<DashboardItem>)?.Select(i => i.Model).ToList();
+                    var allMonitors = (MonitorList.ItemsSource as List<object>)?.OfType<DashboardItem>().Select(i => i.Model).ToList();
                     
                     var settingsWindow = new SettingsWindow(
                         item.Model, 
@@ -124,10 +214,7 @@ namespace HDRGammaController
                         _settingsManager, 
                         (mon, mode, cal, nightOverride) => 
                         {
-                            // Callback updates app state
                             _applyCallback(mon, mode, cal, nightOverride);
-                            
-                            // Optimization: Skip heavyweight RefreshMonitors during drag previews (when nightOverride is set)
                             if (!nightOverride.HasValue)
                             {
                                 RefreshMonitors();
@@ -136,14 +223,77 @@ namespace HDRGammaController
                         
                     settingsWindow.Owner = this;
                     settingsWindow.ShowDialog();
-                    
-                    // Refresh after close in case they changed things
                     RefreshMonitors();
                 }
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"Error opening settings: {ex.Message}\n\n{ex.StackTrace}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+        
+        private void NightModeToggle_Click(object sender, RoutedEventArgs e)
+        {
+            var nm = _settingsManager.NightMode;
+            nm.Enabled = !nm.Enabled;
+            _settingsManager.SetNightMode(nm);
+            
+            OnPropertyChanged(nameof(IsNightModeEnabled));
+            RefreshMonitors();
+        }
+
+        private void NightModeToggle_RightClick(object sender, MouseButtonEventArgs e)
+        {
+             NightModeToggle.ContextMenu.IsOpen = true;
+             e.Handled = true;
+        }
+
+        private void Pause1h_Click(object sender, RoutedEventArgs e) => _nightModeService.PauseUntil(DateTime.Now.AddHours(1));
+        private void Pause4h_Click(object sender, RoutedEventArgs e) => _nightModeService.PauseUntil(DateTime.Now.AddHours(4));
+        private void PauseUntilMorning_Click(object sender, RoutedEventArgs e) => _nightModeService.PauseUntil(DateTime.Today.AddDays(1).AddHours(7)); // 7 AM next day
+
+        private void ExcludedAppMode_Click(object sender, RoutedEventArgs e)
+        {
+            // Just save the current list state
+            _settingsManager.SetExcludedApps(_excludedApps.ToList());
+        }
+
+        private void AddExcludedApp_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.CommandParameter is ComboBox combo)
+            {
+                var app = combo.Text;
+                if (combo.SelectedItem is string selected) app = selected;
+                AddExcludedApp(app);
+                combo.Text = "";
+            }
+        }
+        
+        private void AddExcludedApp(string appName)
+        {
+             string app = appName?.Trim() ?? "";
+             if (string.IsNullOrWhiteSpace(app) || app == "Select running app...") return;
+             if (!app.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) app += ".exe";
+             
+             // Check if exists
+             if (!_excludedApps.Any(r => r.AppName.Equals(app, StringComparison.OrdinalIgnoreCase)))
+             {
+                 var rule = new AppExclusionRule { AppName = app, FullDisable = false };
+                 _excludedApps.Add(rule);
+                 _settingsManager.SetExcludedApps(_excludedApps.ToList());
+             }
+        }
+        
+        private void RemoveExcludedApp_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button b && b.Tag is string appName)
+            {
+                var rule = _excludedApps.FirstOrDefault(r => r.AppName.Equals(appName, StringComparison.OrdinalIgnoreCase));
+                if (rule != null)
+                {
+                    _excludedApps.Remove(rule);
+                    _settingsManager.SetExcludedApps(_excludedApps.ToList());
+                }
             }
         }
     }

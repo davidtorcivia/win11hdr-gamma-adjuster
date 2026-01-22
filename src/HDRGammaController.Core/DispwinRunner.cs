@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Globalization;
 using System.Threading.Tasks;
@@ -17,6 +18,8 @@ namespace HDRGammaController.Core
         // URL for ArgyllCMS Windows binaries
         private const string ArgyllDownloadUrl = "https://www.argyllcms.com/Argyll_V3.3.0_win64_exe.zip";
         private const string ArgyllVersion = "Argyll_V3.3.0";
+        // SHA256 checksum for integrity verification (update when ArgyllCMS version changes)
+        private const string ArgyllExpectedSha256 = ""; // Empty = skip verification (set to actual hash when known)
         
         private static readonly string LocalArgyllDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -30,32 +33,37 @@ namespace HDRGammaController.Core
         
         private string FindDispwin()
         {
-            // 1. Search in local directory
-            string local = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "dispwin.exe");
-            if (File.Exists(local)) return local;
-            
-            // 2. Search in our local app data directory
+            // SECURITY: Do NOT search current directory first (DLL/EXE planting risk)
+            // Only search controlled/admin-protected locations
+
+            // 1. Search in our local app data directory (controlled by this app)
             string localAppData = Path.Combine(LocalArgyllDir, "bin", "dispwin.exe");
-            if (File.Exists(localAppData)) return localAppData;
-            
-            // 3. Search in PATH
-            if (IsInPath("dispwin.exe")) return "dispwin.exe";
-            
-            // 4. Search common locations (DisplayCAL, ArgyllCMS)
-            var commonPaths = new[]
+            if (File.Exists(localAppData))
             {
-                @"C:\Program Files (x86)\DisplayCAL\Argyll\bin\dispwin.exe",
-                @"C:\Program Files\DisplayCAL\Argyll\bin\dispwin.exe",
-                @"C:\Argyll\bin\dispwin.exe",
-                @"C:\Program Files (x86)\Argyll\bin\dispwin.exe"
-            };
-            
-            foreach (var path in commonPaths)
-            {
-                if (File.Exists(path)) return path;
+                Console.WriteLine($"DispwinRunner: Found dispwin in LocalAppData: {localAppData}");
+                return localAppData;
             }
-            
-            // 5. Search DisplayCAL's AppData download location
+
+            // 2. Search common Program Files locations (admin-protected)
+            var trustedPaths = new[]
+            {
+                @"C:\Program Files\DisplayCAL\Argyll\bin\dispwin.exe",
+                @"C:\Program Files (x86)\DisplayCAL\Argyll\bin\dispwin.exe",
+                @"C:\Program Files\Argyll\bin\dispwin.exe",
+                @"C:\Program Files (x86)\Argyll\bin\dispwin.exe",
+                @"C:\Argyll\bin\dispwin.exe"  // Less secure but common install location
+            };
+
+            foreach (var path in trustedPaths)
+            {
+                if (File.Exists(path))
+                {
+                    Console.WriteLine($"DispwinRunner: Found dispwin at trusted path: {path}");
+                    return path;
+                }
+            }
+
+            // 3. Search DisplayCAL's AppData download location (user-controlled but common)
             try
             {
                 string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
@@ -68,7 +76,7 @@ namespace HDRGammaController.Core
                         string dispwinPath = Path.Combine(argyllDir, "bin", "dispwin.exe");
                         if (File.Exists(dispwinPath))
                         {
-                            Console.WriteLine($"DispwinRunner: Found dispwin at {dispwinPath}");
+                            Console.WriteLine($"DispwinRunner: Found dispwin in DisplayCAL dir: {dispwinPath}");
                             return dispwinPath;
                         }
                     }
@@ -78,24 +86,44 @@ namespace HDRGammaController.Core
             {
                 Console.WriteLine($"DispwinRunner: Error searching AppData: {ex.Message}");
             }
-            
+
+            // 4. Search in PATH (last resort, validates full path before returning)
+            string pathResult = FindInPath("dispwin.exe");
+            if (!string.IsNullOrEmpty(pathResult))
+            {
+                Console.WriteLine($"DispwinRunner: Found dispwin in PATH: {pathResult}");
+                return pathResult;
+            }
+
             return string.Empty;
         }
         
-        private bool IsInPath(string fileName)
+        /// <summary>
+        /// Searches PATH for a file and returns its full path, or empty string if not found.
+        /// </summary>
+        private string FindInPath(string fileName)
         {
-            var path = Environment.GetEnvironmentVariable("PATH");
-            if (string.IsNullOrEmpty(path)) return false;
-            
-            foreach (var p in path.Split(Path.PathSeparator))
+            var pathEnv = Environment.GetEnvironmentVariable("PATH");
+            if (string.IsNullOrEmpty(pathEnv)) return string.Empty;
+
+            foreach (var dir in pathEnv.Split(Path.PathSeparator))
             {
                 try
                 {
-                    if (File.Exists(Path.Combine(p, fileName))) return true;
+                    if (string.IsNullOrWhiteSpace(dir)) continue;
+                    string fullPath = Path.Combine(dir, fileName);
+                    if (File.Exists(fullPath))
+                    {
+                        // Return full resolved path, not just the filename
+                        return Path.GetFullPath(fullPath);
+                    }
                 }
-                catch {}
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"DispwinRunner: Error checking PATH entry '{dir}': {ex.Message}");
+                }
             }
-            return false;
+            return string.Empty;
         }
 
         public bool EnsureConfigured()
@@ -148,32 +176,51 @@ namespace HDRGammaController.Core
         
         /// <summary>
         /// Downloads and extracts ArgyllCMS binaries to LocalApplicationData.
+        /// Verifies SHA256 checksum if configured.
         /// </summary>
         public async Task<bool> DownloadArgyllAsync()
         {
+            string? tempDir = null;
             try
             {
                 Console.WriteLine($"DispwinRunner: Downloading ArgyllCMS from {ArgyllDownloadUrl}");
-                
-                // Create temp directory for download
-                string tempDir = Path.Combine(Path.GetTempPath(), "HDRGammaController_ArgyllDownload");
+
+                // Create temp directory with unique name to prevent collisions
+                tempDir = Path.Combine(Path.GetTempPath(), $"HDRGammaController_ArgyllDownload_{Guid.NewGuid():N}");
                 Directory.CreateDirectory(tempDir);
                 string zipPath = Path.Combine(tempDir, "argyll.zip");
-                
+
                 // Download
                 using (var client = new HttpClient())
                 {
                     client.Timeout = TimeSpan.FromMinutes(5);
                     var response = await client.GetAsync(ArgyllDownloadUrl);
                     response.EnsureSuccessStatusCode();
-                    
-                    using (var fs = new FileStream(zipPath, FileMode.Create))
+
+                    using (var fs = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None))
                     {
                         await response.Content.CopyToAsync(fs);
                     }
                 }
-                
+
                 Console.WriteLine($"DispwinRunner: Downloaded to {zipPath}");
+
+                // SECURITY: Verify SHA256 checksum if configured
+                if (!string.IsNullOrEmpty(ArgyllExpectedSha256))
+                {
+                    string actualHash = ComputeSha256(zipPath);
+                    if (!actualHash.Equals(ArgyllExpectedSha256, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Console.WriteLine($"DispwinRunner: SECURITY WARNING - Hash mismatch! Expected: {ArgyllExpectedSha256}, Got: {actualHash}");
+                        throw new InvalidOperationException(
+                            $"Downloaded file failed integrity check.\nExpected SHA256: {ArgyllExpectedSha256}\nActual SHA256: {actualHash}");
+                    }
+                    Console.WriteLine($"DispwinRunner: SHA256 checksum verified: {actualHash}");
+                }
+                else
+                {
+                    Console.WriteLine("DispwinRunner: WARNING - No checksum configured, skipping verification");
+                }
                 
                 // Extract
                 Directory.CreateDirectory(LocalArgyllDir);
@@ -210,10 +257,6 @@ namespace HDRGammaController.Core
                 }
                 
                 Console.WriteLine($"DispwinRunner: Extracted to {LocalArgyllDir}");
-                
-                // Cleanup temp
-                try { Directory.Delete(tempDir, true); } catch {}
-                
                 return true;
             }
             catch (Exception ex)
@@ -221,6 +264,26 @@ namespace HDRGammaController.Core
                 Console.WriteLine($"DispwinRunner: DownloadArgyllAsync failed: {ex}");
                 throw;
             }
+            finally
+            {
+                // Always cleanup temp directory
+                if (tempDir != null && Directory.Exists(tempDir))
+                {
+                    try { Directory.Delete(tempDir, true); }
+                    catch (Exception ex) { Console.WriteLine($"DispwinRunner: Failed to cleanup temp dir: {ex.Message}"); }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Computes SHA256 hash of a file.
+        /// </summary>
+        private static string ComputeSha256(string filePath)
+        {
+            using var sha256 = SHA256.Create();
+            using var stream = File.OpenRead(filePath);
+            byte[] hash = sha256.ComputeHash(stream);
+            return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
         }
 
         public void ApplyGamma(MonitorInfo monitor, GammaMode mode, double whiteLevel)
@@ -243,19 +306,25 @@ namespace HDRGammaController.Core
             Console.WriteLine($"DispwinRunner.ApplyGamma: Generated LUTs with {lutR.Length} entries");
 
             // 2. Create .cal file content
+            // SECURITY: Use GUID-based filename to prevent race conditions
+            // (GetTempFileName + ChangeExtension creates a race between file creation and use)
             string calContent = GenerateCalContent(lutR, lutG, lutB);
-            string tempFile = Path.GetTempFileName();
-            string calFile = Path.ChangeExtension(tempFile, ".cal");
+            string calFile = Path.Combine(Path.GetTempPath(), $"HDRGamma_{Guid.NewGuid():N}.cal");
             Console.WriteLine($"DispwinRunner.ApplyGamma: Created temp file={calFile}");
-            
+
             try
             {
-                File.WriteAllText(calFile, calContent);
-                
+                // Write with exclusive access to prevent tampering
+                using (var fs = new FileStream(calFile, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                using (var writer = new StreamWriter(fs))
+                {
+                    writer.Write(calContent);
+                }
+
                 int argIndex = (int)monitor.OutputId + 1;
                 string args = $"-d {argIndex} \"{calFile}\"";
                 Console.WriteLine($"DispwinRunner.ApplyGamma: Running dispwin with args: {args}");
-                RunDispwin(args); 
+                RunDispwin(args);
             }
             catch (Exception ex)
             {
@@ -264,10 +333,14 @@ namespace HDRGammaController.Core
             }
             finally
             {
-                try {
+                try
+                {
                     if (File.Exists(calFile)) File.Delete(calFile);
-                    if (File.Exists(tempFile)) File.Delete(tempFile);
-                } catch {}
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"DispwinRunner.ApplyGamma: Failed to cleanup temp file: {ex.Message}");
+                }
             }
         }
 

@@ -15,17 +15,17 @@ namespace HDRGammaController
         public List<ScheduleTriggerType> TriggerTypes { get; } = Enum.GetValues(typeof(ScheduleTriggerType)).Cast<ScheduleTriggerType>().ToList();
 
         public event Action? ScheduleChanged;
-        public event Action<int?>? PreviewTemperatureRequested;
+        public event Func<int?, Task>? PreviewTemperatureRequested;
 
         private NightModeSettings _settings;
         private double? _lat;
         private double? _lon;
 
-        // For Dragging
         private bool _isDragging = false;
         private SchedulePointViewModel? _dragItem = null;
         private DateTime _lastPreviewTime = DateTime.MinValue;
-        private const int PreviewThrottleMs = 50; // Update preview at most every 50ms
+        private const int PreviewThrottleMs = 250; // Throttle to 4fps for heavy API calls
+        private bool _isPreviewRunning = false; // Prevent stacking calls
         
         private const int GraphStartHour = 4;
         private const double GraphStartMins = GraphStartHour * 60;
@@ -48,7 +48,9 @@ namespace HDRGammaController
             _settings.EnsureSchedule(_lat, _lon);
             
             RefreshList();
-            DrawGraph();
+            RefreshList();
+            DrawGrid();
+            DrawCurve();
         }
 
         private void NotifyChange()
@@ -64,7 +66,10 @@ namespace HDRGammaController
             _settings.Latitude = _lat;
             _settings.Longitude = _lon;
             
-            DrawGraph();
+            _settings.Longitude = _lon;
+            
+            DrawGrid();
+            DrawCurve();
             NotifyChange();
         }
 
@@ -94,7 +99,25 @@ namespace HDRGammaController
                     
                     _settings.Latitude = _lat;
                     _settings.Longitude = _lon;
-                    DrawGraph();
+                    _settings.Latitude = _lat;
+                    _settings.Longitude = _lon;
+                    
+                    // Auto-convert default schedule to Sunset/Sunrise if simple
+                    if (_settings.Schedule.Count == 2)
+                    {
+                         // Heuristic: If close to default 21:00 / 07:00
+                         var p1 = _settings.Schedule[0];
+                         var p2 = _settings.Schedule[1];
+                         
+                         p1.TriggerType = ScheduleTriggerType.Sunset;
+                         p2.TriggerType = ScheduleTriggerType.Sunrise;
+                         
+                         // Reset offsets logic? Just set types.
+                    }
+                    
+                    RefreshList();
+                    DrawGrid();
+                    DrawCurve();
                     NotifyChange();
                 }
             }
@@ -110,20 +133,21 @@ namespace HDRGammaController
         // Internal method for ViewModel to notify
         public void OnPointChanged()
         {
-            DrawGraph();
+            DrawCurve();
             NotifyChange();
         }
 
-        private void DrawGraph()
+        private void DrawGrid()
         {
-            GraphCanvas.Children.Clear();
-            if (GraphCanvas.ActualWidth == 0 || GraphCanvas.ActualHeight == 0) return;
+            GridCanvas.Children.Clear();
+            if (GridCanvas.ActualWidth == 0 || GridCanvas.ActualHeight == 0) return;
 
-            double w = GraphCanvas.ActualWidth;
-            double h = GraphCanvas.ActualHeight;
+            double w = GridCanvas.ActualWidth;
+            double h = GridCanvas.ActualHeight;
             
             // Draw Grid
             var gridBrush = new SolidColorBrush(Color.FromRgb(60, 60, 60));
+            // ... (rest of grid drawing logic targeting GridCanvas)
             var midBrush = new SolidColorBrush(Color.FromRgb(100, 100, 100)); // Lighter/Grey for midnight
             var textBrush = new SolidColorBrush(Color.FromRgb(150, 150, 150));
             
@@ -144,12 +168,12 @@ namespace HDRGammaController
                 {
                     var line = new Line { X1 = x, Y1 = 0, X2 = x, Y2 = h, Stroke = brush, StrokeThickness = isMidnight ? 2 : 1 };
                     if (dash != null) line.StrokeDashArray = dash;
-                    GraphCanvas.Children.Add(line);
+                    GridCanvas.Children.Add(line);
 
                     var tb = new TextBlock { Text = $"{actualHour}:00", FontSize = 10, Foreground = textBrush };
                     Canvas.SetLeft(tb, x + 4);
                     Canvas.SetTop(tb, h - 16);
-                    GraphCanvas.Children.Add(tb);
+                    GridCanvas.Children.Add(tb);
                 }
             }
             
@@ -159,47 +183,64 @@ namespace HDRGammaController
             {
                 double y = TempToY(k, h);
                 var line = new Line { X1 = 0, Y1 = y, X2 = w, Y2 = y, Stroke = gridBrush, StrokeThickness = 1, StrokeDashArray = new DoubleCollection { 2, 4 } };
-                GraphCanvas.Children.Add(line);
+                GridCanvas.Children.Add(line);
                 
                 var tb = new TextBlock { Text = $"{k}K", FontSize = 9, Foreground = textBrush };
                 Canvas.SetLeft(tb, 4);
                 Canvas.SetTop(tb, y - 6);
-                GraphCanvas.Children.Add(tb);
+                GridCanvas.Children.Add(tb);
             }
+        }
 
-            // --- Draw Curve ---
-            // We reuse NightModeService logic structure to sample points
-            // But simplify for visualization: sample every 10 mins (144 points)
-            var points = new PointCollection();
-            
-            // Temporary service instance to calculate curve? Or duplicate logic?
-            // Duplicating logic is safer to avoid side effects or heavy dependencies.
-            // Actually, calculating the curve for 144 points is fast.
-            
+        private void DrawCurve()
+        {
+            if (CurveCanvas.ActualWidth == 0 || CurveCanvas.ActualHeight == 0) return;
+
+            double w = CurveCanvas.ActualWidth;
+            double h = CurveCanvas.ActualHeight;
+
             // Resolve points once
             var resolved = _settings.Schedule.Select(p => 
             {
                 var time = p.GetTimeOfDay(_lat, _lon);
                 return (Time: time, Point: p); 
             }).OrderBy(x => x.Time).ToList();
+
+            // 1. Update/Create Polyline
+            Polyline poly;
+            if (CurveCanvas.Children.Count > 0 && CurveCanvas.Children[0] is Polyline p)
+            {
+                poly = p;
+            }
+            else
+            {
+                CurveCanvas.Children.Clear(); // Safety
+                poly = new Polyline
+                {
+                    Stroke = new SolidColorBrush(Color.FromRgb(255, 180, 0)),
+                    StrokeThickness = 2
+                };
+                CurveCanvas.Children.Add(poly);
+            }
+
+            var points = new PointCollection();
             
             // Helper to get temp at time T (minutes from 0 to 1440)
+            // (Inlined or efficient reuse of service logic)
             Func<double, double> getTemp = (minutes) =>
             {
                 TimeSpan t = TimeSpan.FromMinutes(minutes);
-                
-                // Find current segment (same logic as Service)
                 int idx = -1;
                 for(int i=0; i<resolved.Count; i++) if (resolved[i].Time.TotalMinutes <= minutes) idx = i;
                 
                 (TimeSpan Time, NightModeSchedulePoint Point) curr, prev;
                 
-                if (idx == -1) // Early morning, use yesterday's last
+                if (idx == -1)
                 {
                     if (resolved.Count == 0) return 6500;
                     var last = resolved.Last();
                     curr = (last.Time - TimeSpan.FromHours(24), last.Point);
-                    prev = resolved.Count > 1 ? resolved[resolved.Count-2] : last; // simplification
+                    prev = resolved.Count > 1 ? resolved[resolved.Count-2] : last;
                     if (resolved.Count > 1) prev = (prev.Time - TimeSpan.FromHours(24), prev.Point);
                     else prev = (prev.Time - TimeSpan.FromHours(48), prev.Point);
                 }
@@ -229,7 +270,10 @@ namespace HDRGammaController
                 return trg;
             };
 
-            for (double relM = 0; relM <= 1440; relM += 5) // 5 min steps relative to Start
+            // Optimization: Sample fewer points if dragging? No, 288 is fine if we just update PointCollection.
+            // Actually PointCollection is a Freezeable?
+            // Creating new PointCollection is fast.
+            for (double relM = 0; relM <= 1440; relM += 5) 
             {
                 double absM = relM + GraphStartMins;
                 if (absM >= 1440) absM -= 1440;
@@ -237,40 +281,56 @@ namespace HDRGammaController
                 double k = getTemp(absM);
                 points.Add(new Point( (relM/1440.0)*w, TempToY(k, h) ));
             }
-            
-            var poly = new Polyline
+            poly.Points = points;
+
+            // 2. Update/Create Nodes
+            // We assume Nodes are at indices 1..N
+            // If count mismatches, clear and rebuild (e.g. added/removed)
+            // Expected count = 1 (Polyline) + N (Nodes) + 1 (NowLine)
+            if (CurveCanvas.Children.Count != 1 + resolved.Count + 1)
             {
-                Stroke = new SolidColorBrush(Color.FromRgb(255, 180, 0)),
-                StrokeThickness = 2,
-                Points = points
-            };
-            GraphCanvas.Children.Add(poly);
-            
-            // --- Draw Nodes ---
-            foreach (var r in resolved)
+                 // Full rebuild if mismatch
+                 CurveCanvas.Children.Clear();
+                 CurveCanvas.Children.Add(poly);
+                 
+                 foreach (var r in resolved)
+                 {
+                     var el = new Ellipse
+                     {
+                         Width = 10, Height = 10, Fill = Brushes.White, Stroke = Brushes.Black, StrokeThickness = 1,
+                         Tag = r.Point // Store model
+                     };
+                     el.MouseLeftButtonDown += Node_MouseDown;
+                     el.MouseLeftButtonUp += GraphCanvas_MouseUp;
+                     CurveCanvas.Children.Add(el);
+                 }
+                 
+                 // Now Line
+                 var nowLine = new Line { Stroke = Brushes.Red, StrokeThickness = 1, Opacity = 0.5 };
+                 CurveCanvas.Children.Add(nowLine);
+            }
+
+            // Sync Node Positions
+            for(int i=0; i<resolved.Count; i++)
             {
-                double mx = TimeToX(r.Time, w);
-                double my = TempToY(r.Point.TargetKelvin, h);
-                
-                var el = new Ellipse
+                if (CurveCanvas.Children[1+i] is Ellipse el)
                 {
-                    Width = 10, Height = 10, Fill = Brushes.White, Stroke = Brushes.Black, StrokeThickness = 1,
-                    Tag = r.Point // Store model
-                };
-                Canvas.SetLeft(el, mx - 5);
-                Canvas.SetTop(el, my - 5);
-                
-                // Events for drag
-                el.MouseLeftButtonDown += Node_MouseDown;
-                el.MouseLeftButtonUp += GraphCanvas_MouseUp; // Critical for robust release checking
-                
-                GraphCanvas.Children.Add(el);
+                    var r = resolved[i];
+                    double mx = TimeToX(r.Time, w);
+                    double my = TempToY(r.Point.TargetKelvin, h);
+                    Canvas.SetLeft(el, mx - 5);
+                    Canvas.SetTop(el, my - 5);
+                    el.Tag = r.Point; // Ensure Tag is updated if order changed? Tag refers to object reference, safe.
+                }
             }
             
-            // --- Draw "Now" Indicator ---
-            double nowX = TimeToX(DateTime.Now.TimeOfDay, w);
-            var nowLine = new Line { X1 = nowX, Y1 = 0, X2 = nowX, Y2 = h, Stroke = Brushes.Red, StrokeThickness = 1, Opacity = 0.5 };
-            GraphCanvas.Children.Add(nowLine);
+            // Sync Now Line
+            if (CurveCanvas.Children.Count > 0 && CurveCanvas.Children[CurveCanvas.Children.Count-1] is Line nl)
+            {
+                 double nowX = TimeToX(DateTime.Now.TimeOfDay, w);
+                 nl.X1 = nowX; nl.X2 = nowX;
+                 nl.Y1 = 0; nl.Y2 = h;
+            }
         }
 
         private double TempToY(double k, double h)
@@ -322,10 +382,11 @@ namespace HDRGammaController
                     
                     // Show Overlay
                     DragOverlay.Visibility = Visibility.Visible;
-                    UpdateOverlay(e.GetPosition(GraphCanvas), GraphCanvas.ActualWidth, vm);
+                    UpdateOverlay(e.GetPosition(CurveCanvas), CurveCanvas.ActualWidth, vm);
                     
                     // Start Preview
-                    PreviewTemperatureRequested?.Invoke(vm.TargetKelvin);
+                    // Trigger async fire
+                    _ = PreviewTemperatureRequested?.Invoke(vm.TargetKelvin);
                 }
             }
         }
@@ -349,13 +410,13 @@ namespace HDRGammaController
             catch {}
         }
 
-        private void GraphCanvas_MouseMove(object sender, MouseEventArgs e)
+        private async void GraphCanvas_MouseMove(object sender, MouseEventArgs e)
         {
             if (_isDragging && _dragItem != null)
             {
-                var pos = e.GetPosition(GraphCanvas);
-                double w = GraphCanvas.ActualWidth;
-                double h = GraphCanvas.ActualHeight;
+                var pos = e.GetPosition(CurveCanvas);
+                double w = CurveCanvas.ActualWidth;
+                double h = CurveCanvas.ActualHeight;
                 
                 // Update Time
                 double pctX = Math.Clamp(pos.X / w, 0, 1);
@@ -386,17 +447,29 @@ namespace HDRGammaController
                 
                 _dragItem.RefreshDisplay(); // Update UI string
                 
-                DrawGraph(); // Redraw dynamic
+                _dragItem.RefreshDisplay(); // Update UI string
+                
+                DrawCurve(); // Redraw only curve and nodes
                 
                 // Update Overlay
                 UpdateOverlay(pos, w, _dragItem);
                 
                 // Live visual preview (force temp), throttled
+                // Using serialized async to prevent stack
                 var now = DateTime.Now;
-                if ((now - _lastPreviewTime).TotalMilliseconds > PreviewThrottleMs)
+                if ((now - _lastPreviewTime).TotalMilliseconds > PreviewThrottleMs && !_isPreviewRunning)
                 {
                     _lastPreviewTime = now;
-                    PreviewTemperatureRequested?.Invoke(_dragItem.TargetKelvin);
+                    _isPreviewRunning = true;
+                    try 
+                    {
+                        var task = PreviewTemperatureRequested?.Invoke(_dragItem.TargetKelvin);
+                        if (task != null) await task;
+                    } 
+                    finally 
+                    {
+                        _isPreviewRunning = false;
+                    }
                 }
             }
         }
@@ -424,9 +497,15 @@ namespace HDRGammaController
             // Click on empty space creates point?
             if (e.ClickCount == 2)
             {
-                var pos = e.GetPosition(GraphCanvas);
-                double w = GraphCanvas.ActualWidth;
-                double h = GraphCanvas.ActualHeight;
+                if (_settings.Schedule.Count >= 12)
+                {
+                    MessageBox.Show("Maximum of 12 schedule points allowed.", "Limit Reached", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
+                var pos = e.GetPosition(CurveCanvas);
+                double w = CurveCanvas.ActualWidth;
+                double h = CurveCanvas.ActualHeight;
                 
                 double temp = YToTemp(pos.Y, h);
                 
@@ -441,18 +520,25 @@ namespace HDRGammaController
                 
                 _settings.Schedule.Add(p);
                  RefreshList();
-                DrawGraph();
+                DrawCurve();
                 NotifyChange();
             }
         }
 
         private void GraphCanvas_SizeChanged(object sender, SizeChangedEventArgs e)
         {
-            DrawGraph();
+            DrawGrid();
+            DrawCurve();
         }
 
         private void AddPoint_Click(object sender, RoutedEventArgs e)
         {
+            if (_settings.Schedule.Count >= 12)
+            {
+                MessageBox.Show("Maximum of 12 schedule points allowed.", "Limit Reached", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
             _settings.Schedule.Add(new NightModeSchedulePoint 
             { 
                 Time = DateTime.Now.TimeOfDay, 
@@ -460,7 +546,7 @@ namespace HDRGammaController
                 FadeMinutes = 30 
             });
             RefreshList();
-            DrawGraph();
+            DrawCurve();
             NotifyChange();
         }
         
@@ -469,7 +555,7 @@ namespace HDRGammaController
              _settings.Schedule.Clear();
              _settings.EnsureSchedule(_lat, _lon);
              RefreshList();
-             DrawGraph();
+             DrawCurve();
              NotifyChange();
         }
 
@@ -479,7 +565,7 @@ namespace HDRGammaController
             {
                 _settings.Schedule.Remove(vm.Model);
                 RefreshList();
-                DrawGraph();
+                DrawCurve();
                 NotifyChange();
             }
         }

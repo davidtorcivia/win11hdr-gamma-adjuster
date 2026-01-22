@@ -1,3 +1,5 @@
+using System;
+
 namespace HDRGammaController.Core
 {
     /// <summary>
@@ -108,5 +110,31 @@ namespace HDRGammaController.Core
             BlueOffset = this.BlueOffset,
             Algorithm = this.Algorithm
         };
+
+        /// <summary>
+        /// Returns a hash code suitable for use in dictionaries and caches.
+        /// Values are rounded to reduce cache fragmentation for nearly-identical settings.
+        /// </summary>
+        public override int GetHashCode()
+        {
+            // Round values to reduce cache fragmentation
+            int brightnessKey = (int)Math.Round(Brightness);
+            int tempKey = (int)Math.Round(Temperature * 10);
+            int tempOffsetKey = (int)Math.Round(TemperatureOffset * 10);
+            int tintKey = (int)Math.Round(Tint * 10);
+            int rGainKey = (int)Math.Round(RedGain * 100);
+            int gGainKey = (int)Math.Round(GreenGain * 100);
+            int bGainKey = (int)Math.Round(BlueGain * 100);
+            int rOffsetKey = (int)Math.Round(RedOffset * 1000);
+            int gOffsetKey = (int)Math.Round(GreenOffset * 1000);
+            int bOffsetKey = (int)Math.Round(BlueOffset * 1000);
+
+            return HashCode.Combine(
+                HashCode.Combine(brightnessKey, tempKey, tempOffsetKey, tintKey),
+                HashCode.Combine(rGainKey, gGainKey, bGainKey),
+                HashCode.Combine(rOffsetKey, gOffsetKey, bOffsetKey),
+                HashCode.Combine((int)Algorithm, UseLinearBrightness)
+            );
+        }
     }
 }

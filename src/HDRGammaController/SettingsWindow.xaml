@@ -341,19 +341,9 @@
                             <StackPanel>
                                 <TextBlock Text="Night Mode" Style="{StaticResource SectionHeader}"/>
                                 
-                                <!-- Global Settings -->
-                                <TextBlock Text="Global Settings" Style="{StaticResource SectionHeader}" FontSize="12" Margin="0,0,0,8" Foreground="{StaticResource TextDim}"/>
-                                
-                                <TextBlock Text="Quick toggle: Win+Shift+N • Applies to all HDR monitors" 
-                                           Foreground="{StaticResource TextDim}" 
-                                           FontSize="11" Margin="0,-8,0,8"/>
-                                
-                                <CheckBox x:Name="NightModeEnabled" Content="Enable scheduled night mode" 
-                                          Style="{StaticResource ModernToggle}"
-                                          Checked="NightModeEnabled_Changed" Unchecked="NightModeEnabled_Changed"/>
-                                
-                                <!-- Schedule Editor -->
-                                <local:NightModeScheduleControl x:Name="ScheduleEditor" Margin="0,12,0,0" Height="360"/>
+                                <!-- Global Settings Moved to Dashboard -->
+                                <TextBlock Text="Global Night Mode settings are now managed in the Dashboard." 
+                                           Foreground="{StaticResource TextDim}" FontSize="12" Margin="0,0,0,16" TextWrapping="Wrap"/>
                                 
                                 <!-- Per Monitor Settings -->
                                 <Separator Margin="0,16,0,16" Background="#3F3F3F"/>
@@ -380,6 +370,8 @@
                                 </Grid>
                             </StackPanel>
                         </Border>
+
+                        <!-- App Auto-Disable Moved to Dashboard -->
                         
                         <!-- RGB Fine Tuning Section -->
                         <Border Style="{StaticResource SectionCard}">
