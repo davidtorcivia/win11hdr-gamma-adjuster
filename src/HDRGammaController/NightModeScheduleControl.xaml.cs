@@ -17,7 +17,7 @@ namespace HDRGammaController
         public event Action? ScheduleChanged;
         public event Func<int?, Task>? PreviewTemperatureRequested;
 
-        private NightModeSettings _settings;
+        private NightModeSettings _settings = null!; // Set by Initialize
         private double? _lat;
         private double? _lon;
 
@@ -585,7 +585,7 @@ namespace HDRGammaController
 
     public class SchedulePointViewModel
     {
-        public NightModeScheduleControl Parent { get; set; }
+        public NightModeScheduleControl Parent { get; set; } = null!; // Set by RefreshList
         public NightModeSchedulePoint Model { get; }
 
         /// <summary>

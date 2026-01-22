@@ -15,12 +15,12 @@ namespace HDRGammaController
         private readonly List<MonitorInfo> _monitors;
         private readonly SettingsManager _settingsManager;
         private readonly Action<MonitorInfo, GammaMode, CalibrationSettings?, int?>? _applyCallback;
-        
+
         private bool _isLoading = true;
-        private MonitorInfo _currentMonitor;
-        private MonitorProfileData _currentProfile;
+        private MonitorInfo _currentMonitor = null!; // Set in constructor
+        private MonitorProfileData _currentProfile = null!; // Set by LoadMonitorProfile
         private MonitorProfileData? _savedProfile; // Last saved profile for compare
-        private NightModeSettings _currentNightMode;
+        private NightModeSettings _currentNightMode = null!; // Set by LoadMonitorProfile
         private Dictionary<string, MonitorProfileData> _pendingChanges = new();
         // ExcludedApps removed
         

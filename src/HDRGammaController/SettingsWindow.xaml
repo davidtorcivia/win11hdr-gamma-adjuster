@@ -326,21 +326,27 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" 
-                                CornerRadius="4" 
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                CornerRadius="4"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="{StaticResource AccentHoverBrush}"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource AccentHoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#005A9E"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
         </Style>
-        
+
         <!-- Secondary Button -->
         <Style x:Key="SecondaryButton" TargetType="Button">
             <Setter Property="Background" Value="#444"/>
@@ -351,14 +357,20 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" 
-                                CornerRadius="4" 
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                CornerRadius="4"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#555"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#555"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#333"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -384,10 +396,40 @@
             <Border Grid.Row="0" Background="#252525" CornerRadius="8,8,0,0" MouseLeftButtonDown="TitleBar_MouseDown">
                 <Grid Margin="16,0">
                     <TextBlock Text="Settings" VerticalAlignment="Center" FontWeight="Medium"/>
-                    <Button Content="✕" HorizontalAlignment="Right" VerticalAlignment="Center"
-                            Background="Transparent" Foreground="#888" BorderThickness="0"
-                            FontSize="14" Padding="8,4" Cursor="Hand"
-                            Click="Close_Click"/>
+                    <Button HorizontalAlignment="Right" VerticalAlignment="Center" Click="Close_Click"
+                            ToolTip="Close">
+                        <Button.Style>
+                            <Style TargetType="Button">
+                                <Setter Property="Background" Value="Transparent"/>
+                                <Setter Property="Foreground" Value="#888"/>
+                                <Setter Property="BorderThickness" Value="0"/>
+                                <Setter Property="Padding" Value="10,6"/>
+                                <Setter Property="Cursor" Value="Hand"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                                    CornerRadius="4" Padding="{TemplateBinding Padding}">
+                                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="Bd" Property="Background" Value="#E81123"/>
+                                                    <Setter Property="Foreground" Value="White"/>
+                                                </Trigger>
+                                                <Trigger Property="IsPressed" Value="True">
+                                                    <Setter TargetName="Bd" Property="Background" Value="#C42B1C"/>
+                                                    <Setter Property="Foreground" Value="White"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </Button.Style>
+                        <Path Data="M0,0 L8,8 M8,0 L0,8" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                              StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                    </Button>
                 </Grid>
             </Border>
             
