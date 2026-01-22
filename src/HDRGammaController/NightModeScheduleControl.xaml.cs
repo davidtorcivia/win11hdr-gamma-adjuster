@@ -124,8 +124,14 @@ namespace HDRGammaController
 
         private void RefreshList()
         {
-            var viewModels = _settings.Schedule.Select(p => new SchedulePointViewModel(p) { Parent = this }).ToList();
-            PointsGrid.ItemsSource = viewModels;
+            // Sort points chronologically by their resolved time of day
+            var sortedPoints = _settings.Schedule
+                .Select(p => new { Point = p, Time = p.GetTimeOfDay(_lat, _lon) })
+                .OrderBy(x => x.Time)
+                .Select(x => new SchedulePointViewModel(x.Point) { Parent = this })
+                .ToList();
+
+            PointsGrid.ItemsSource = sortedPoints;
         }
         
         // Internal method for ViewModel to notify

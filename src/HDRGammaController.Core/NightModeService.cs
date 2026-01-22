@@ -69,22 +69,12 @@ namespace HDRGammaController.Core
         public void EnsureSchedule(double? lat, double? lon)
         {
             if (Schedule != null && Schedule.Count > 0) return;
-            
+
             // Migrate legacy settings to schedule
             Schedule = new List<NightModeSchedulePoint>();
-            
-            // Point 1: At StartTime (or Sunset), fade to Night Temp
-            var startPoint = new NightModeSchedulePoint
-            {
-                TriggerType = UseAutoSchedule ? ScheduleTriggerType.Sunset : ScheduleTriggerType.FixedTime,
-                Time = StartTime,
-                OffsetMinutes = 0,
-                TargetKelvin = TemperatureKelvin,
-                FadeMinutes = FadeMinutes
-            };
-            
-            // Point 2: At EndTime (or Sunrise), fade to Daylight (6500K)
-            var endPoint = new NightModeSchedulePoint
+
+            // Point 1: At EndTime (or Sunrise), fade to Daylight (6500K) - morning first chronologically
+            var sunrisePoint = new NightModeSchedulePoint
             {
                 TriggerType = UseAutoSchedule ? ScheduleTriggerType.Sunrise : ScheduleTriggerType.FixedTime,
                 Time = EndTime,
@@ -92,9 +82,19 @@ namespace HDRGammaController.Core
                 TargetKelvin = 6500, // Daylight
                 FadeMinutes = FadeMinutes
             };
-            
-            Schedule.Add(startPoint);
-            Schedule.Add(endPoint);
+
+            // Point 2: At StartTime (or Sunset), fade to Night Temp - evening second
+            var sunsetPoint = new NightModeSchedulePoint
+            {
+                TriggerType = UseAutoSchedule ? ScheduleTriggerType.Sunset : ScheduleTriggerType.FixedTime,
+                Time = StartTime,
+                OffsetMinutes = 0,
+                TargetKelvin = TemperatureKelvin,
+                FadeMinutes = FadeMinutes
+            };
+
+            Schedule.Add(sunrisePoint);
+            Schedule.Add(sunsetPoint);
         }
         
         /// <summary>
