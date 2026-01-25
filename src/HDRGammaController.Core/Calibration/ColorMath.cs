@@ -19,18 +19,19 @@ namespace HDRGammaController.Core.Calibration
         #region Constants
 
         /// <summary>
-        /// CIE Lab function threshold: (6/29)³ ≈ 0.008856
-        /// Below this, the linear segment is used.
+        /// CIE Lab function threshold ε (epsilon): (6/29)³ = 216/24389 ≈ 0.008856
+        /// Below this, the linear segment is used instead of the cube root.
         /// </summary>
         private const double LabEpsilon = 216.0 / 24389.0; // 0.008856451679...
 
         /// <summary>
-        /// CIE Lab function scaling factor: (29/6)² / 3 ≈ 7.787
+        /// CIE Lab function scaling factor κ (kappa): (29/6)³ = 24389/27 ≈ 903.3
+        /// Used in the linear segment: f(t) = (κt + 16) / 116
         /// </summary>
         private const double LabKappa = 24389.0 / 27.0; // 903.2962962...
 
         /// <summary>
-        /// Lab offset: 16/116 ≈ 0.137931
+        /// Lab offset: 16/116 ≈ 0.137931 (not currently used but documented for reference)
         /// </summary>
         private const double LabOffset = 16.0 / 116.0;
 

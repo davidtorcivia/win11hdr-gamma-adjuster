@@ -429,22 +429,31 @@ namespace HDRGammaController.Core.Calibration
         private readonly double[]? _lookupTable;
         private readonly double _gamma;
         private readonly bool _useLut;
+        private readonly bool _isMonotonic;
 
         /// <summary>LUT size for interpolated curves.</summary>
         public const int LutSize = 4096;
+
+        /// <summary>
+        /// Gets whether the tone curve is monotonically increasing.
+        /// Non-monotonic curves may produce incorrect results in InverseLookup.
+        /// </summary>
+        public bool IsMonotonic => _isMonotonic;
 
         private ToneCurve(double gamma)
         {
             _gamma = gamma;
             _useLut = false;
             _lookupTable = null;
+            _isMonotonic = true; // Gamma curves are always monotonic
         }
 
-        private ToneCurve(double[] lut)
+        private ToneCurve(double[] lut, bool isMonotonic)
         {
             _lookupTable = lut;
             _useLut = true;
             _gamma = 2.2; // Not used
+            _isMonotonic = isMonotonic;
         }
 
         /// <summary>
@@ -458,7 +467,9 @@ namespace HDRGammaController.Core.Calibration
         /// <summary>
         /// Creates a tone curve from measured points.
         /// </summary>
-        public static ToneCurve CreateFromPoints(IEnumerable<(double input, double output)> points)
+        /// <param name="points">Measured (input, output) pairs</param>
+        /// <param name="enforceMonotonic">If true, corrects non-monotonic segments</param>
+        public static ToneCurve CreateFromPoints(IEnumerable<(double input, double output)> points, bool enforceMonotonic = true)
         {
             var sortedPoints = points.OrderBy(p => p.input).ToList();
 
@@ -474,7 +485,90 @@ namespace HDRGammaController.Core.Calibration
                 lut[i] = InterpolatePoints(sortedPoints, x);
             }
 
-            return new ToneCurve(lut);
+            // Check and optionally fix monotonicity
+            bool isMonotonic = CheckMonotonicity(lut);
+
+            if (!isMonotonic && enforceMonotonic)
+            {
+                EnforceMonotonicity(lut);
+                isMonotonic = true; // After enforcement
+            }
+
+            return new ToneCurve(lut, isMonotonic);
+        }
+
+        /// <summary>
+        /// Checks if a LUT is monotonically non-decreasing.
+        /// </summary>
+        private static bool CheckMonotonicity(double[] lut)
+        {
+            for (int i = 1; i < lut.Length; i++)
+            {
+                if (lut[i] < lut[i - 1] - 1e-10) // Small epsilon for floating point
+                    return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Enforces monotonicity by smoothing non-monotonic segments.
+        /// Uses the "pool adjacent violators" algorithm (isotonic regression).
+        /// </summary>
+        private static void EnforceMonotonicity(double[] lut)
+        {
+            // Pool Adjacent Violators Algorithm (PAVA)
+            // This produces the best monotonic approximation in L2 sense
+            int n = lut.Length;
+            var pooled = new double[n];
+            var weight = new int[n];
+
+            for (int i = 0; i < n; i++)
+            {
+                pooled[i] = lut[i];
+                weight[i] = 1;
+            }
+
+            int j = 0;
+            for (int i = 1; i < n; i++)
+            {
+                // Check if current value violates monotonicity
+                if (pooled[i] < pooled[j])
+                {
+                    // Merge current block with previous block
+                    double totalWeight = weight[j] + weight[i];
+                    pooled[j] = (pooled[j] * weight[j] + pooled[i] * weight[i]) / totalWeight;
+                    weight[j] = (int)totalWeight;
+
+                    // Check if we need to merge further back
+                    while (j > 0 && pooled[j] < pooled[j - 1])
+                    {
+                        j--;
+                        totalWeight = weight[j] + weight[j + 1];
+                        pooled[j] = (pooled[j] * weight[j] + pooled[j + 1] * weight[j + 1]) / totalWeight;
+                        weight[j] = (int)totalWeight;
+                    }
+                }
+                else
+                {
+                    j++;
+                    pooled[j] = pooled[i];
+                    weight[j] = 1;
+                }
+            }
+
+            // Expand pooled values back to original LUT
+            int idx = 0;
+            for (int block = 0; block <= j; block++)
+            {
+                for (int k = 0; k < weight[block]; k++)
+                {
+                    lut[idx++] = pooled[block];
+                }
+            }
+
+            // Ensure endpoints are correct
+            lut[0] = Math.Max(0, lut[0]);
+            lut[n - 1] = Math.Min(1, lut[n - 1]);
         }
 
         /// <summary>

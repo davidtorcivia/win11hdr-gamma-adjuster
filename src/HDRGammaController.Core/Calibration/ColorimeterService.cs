@@ -29,6 +29,7 @@ namespace HDRGammaController.Core.Calibration
         private readonly string _argyllBinPath;
         private string? _spotreadPath;
         private bool _isInitialized;
+        private bool _isInitializing; // Guards against concurrent InitializeAsync calls
         private ColorimeterInfo? _connectedColorimeter;
         private int _displayIndex = 1;
         private readonly object _lock = new();
@@ -70,11 +71,49 @@ namespace HDRGammaController.Core.Calibration
         /// <summary>
         /// Initializes the service and detects connected colorimeters.
         /// </summary>
+        /// <remarks>
+        /// Thread-safe: Multiple concurrent calls will only perform initialization once.
+        /// Subsequent calls after successful initialization return immediately.
+        /// Failed initialization can be retried by calling again.
+        /// </remarks>
         public async Task<bool> InitializeAsync(CancellationToken cancellationToken = default)
         {
+            // Fast path: already initialized successfully
             lock (_lock)
             {
-                if (_isInitialized) return IsReady;
+                if (_isInitialized && _connectedColorimeter != null)
+                    return true;
+            }
+
+            // Slow path: need to initialize (but only one thread at a time)
+            // Note: We can't hold the lock across await, so we use a flag pattern
+            bool shouldInitialize;
+            lock (_lock)
+            {
+                // Double-check after acquiring lock
+                if (_isInitialized && _connectedColorimeter != null)
+                    return true;
+
+                // Mark that we're about to initialize (prevent concurrent attempts)
+                // _isInitialized remains false until we successfully complete
+                shouldInitialize = !_isInitializing;
+                if (shouldInitialize)
+                    _isInitializing = true;
+            }
+
+            // If another thread is already initializing, wait for it
+            if (!shouldInitialize)
+            {
+                // Poll until initialization completes
+                while (true)
+                {
+                    await Task.Delay(50, cancellationToken);
+                    lock (_lock)
+                    {
+                        if (!_isInitializing)
+                            return _isInitialized && _connectedColorimeter != null;
+                    }
+                }
             }
 
             try
@@ -95,7 +134,10 @@ namespace HDRGammaController.Core.Calibration
 
                 if (_connectedColorimeter != null)
                 {
-                    _isInitialized = true;
+                    lock (_lock)
+                    {
+                        _isInitialized = true;
+                    }
                     RaiseStatusChanged(ColorimeterStatus.Ready,
                         $"Connected: {_connectedColorimeter.Model}");
                     return true;
@@ -111,6 +153,13 @@ namespace HDRGammaController.Core.Calibration
             {
                 RaiseStatusChanged(ColorimeterStatus.Error, $"Initialization failed: {ex.Message}");
                 return false;
+            }
+            finally
+            {
+                lock (_lock)
+                {
+                    _isInitializing = false;
+                }
             }
         }
 

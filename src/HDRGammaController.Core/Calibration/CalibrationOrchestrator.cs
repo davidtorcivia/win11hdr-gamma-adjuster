@@ -31,9 +31,11 @@ namespace HDRGammaController.Core.Calibration
         private CancellationTokenSource? _cancellationTokenSource;
         private readonly Stopwatch _elapsedTimer = new();
 
-        private CalibrationState _state = CalibrationState.Idle;
-        private int _currentPatchIndex;
-        private bool _isPaused;
+        // Thread synchronization
+        private readonly object _stateLock = new();
+        private volatile CalibrationState _state = CalibrationState.Idle;
+        private volatile int _currentPatchIndex;
+        private volatile bool _isPaused;
         private int _retryCount;
 
         // Configuration
@@ -111,11 +113,17 @@ namespace HDRGammaController.Core.Calibration
         {
             get
             {
-                if (_currentPatchIndex <= 0 || TotalPatches <= 0)
-                    return TimeSpan.FromSeconds(TotalPatches * 3); // ~3 sec per patch estimate
+                int total = TotalPatches;
+                int current = _currentPatchIndex;
 
-                var avgTimePerPatch = _elapsedTimer.Elapsed.TotalSeconds / _currentPatchIndex;
-                var remainingPatches = TotalPatches - _currentPatchIndex;
+                // Before any measurements complete, estimate ~3 sec per patch
+                if (current <= 0 || total <= 0)
+                    return TimeSpan.FromSeconds(Math.Max(total, 0) * 3);
+
+                // After at least one measurement, calculate based on actual timing
+                double elapsedSeconds = _elapsedTimer.Elapsed.TotalSeconds;
+                double avgTimePerPatch = elapsedSeconds / current;
+                int remainingPatches = Math.Max(0, total - current);
                 return TimeSpan.FromSeconds(avgTimePerPatch * remainingPatches);
             }
         }
@@ -123,7 +131,14 @@ namespace HDRGammaController.Core.Calibration
         /// <summary>
         /// Gets the progress percentage (0-100).
         /// </summary>
-        public double ProgressPercent => TotalPatches > 0 ? (_currentPatchIndex * 100.0 / TotalPatches) : 0;
+        public double ProgressPercent
+        {
+            get
+            {
+                int total = TotalPatches;
+                return total > 0 ? (_currentPatchIndex * 100.0 / total) : 0;
+            }
+        }
 
         /// <summary>
         /// Gets the current patch being measured.
@@ -264,10 +279,13 @@ namespace HDRGammaController.Core.Calibration
         /// </summary>
         public void Pause()
         {
-            if (_state == CalibrationState.Running)
+            lock (_stateLock)
             {
-                _isPaused = true;
-                SetState(CalibrationState.Paused);
+                if (_state == CalibrationState.Running)
+                {
+                    _isPaused = true;
+                    SetStateLocked(CalibrationState.Paused);
+                }
             }
         }
 
@@ -276,10 +294,13 @@ namespace HDRGammaController.Core.Calibration
         /// </summary>
         public void Resume()
         {
-            if (_state == CalibrationState.Paused)
+            lock (_stateLock)
             {
-                _isPaused = false;
-                SetState(CalibrationState.Running);
+                if (_state == CalibrationState.Paused)
+                {
+                    _isPaused = false;
+                    SetStateLocked(CalibrationState.Running);
+                }
             }
         }
 
@@ -288,8 +309,11 @@ namespace HDRGammaController.Core.Calibration
         /// </summary>
         public void Cancel()
         {
-            _cancellationTokenSource?.Cancel();
-            SetState(CalibrationState.Cancelled);
+            lock (_stateLock)
+            {
+                _cancellationTokenSource?.Cancel();
+                SetStateLocked(CalibrationState.Cancelled);
+            }
         }
 
         #endregion
@@ -367,12 +391,27 @@ namespace HDRGammaController.Core.Calibration
             }
         }
 
+        /// <summary>
+        /// Sets state with automatic locking. Use from methods that don't already hold _stateLock.
+        /// </summary>
         private void SetState(CalibrationState newState)
+        {
+            lock (_stateLock)
+            {
+                SetStateLocked(newState);
+            }
+        }
+
+        /// <summary>
+        /// Sets state without locking. Caller MUST hold _stateLock.
+        /// </summary>
+        private void SetStateLocked(CalibrationState newState)
         {
             if (_state != newState)
             {
                 var oldState = _state;
                 _state = newState;
+                // Note: Event raised while holding lock - keep handlers lightweight
                 StateChanged?.Invoke(this, new CalibrationStateEventArgs(oldState, newState));
             }
         }

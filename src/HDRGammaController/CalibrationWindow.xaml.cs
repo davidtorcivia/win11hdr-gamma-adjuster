@@ -82,6 +82,13 @@ namespace HDRGammaController
         private IReadOnlyList<ColorPatch>? _patches;
         private CancellationTokenSource? _cancellationTokenSource;
 
+        // Calibration orchestrator for managing the measurement workflow
+        private CalibrationOrchestrator? _orchestrator;
+        private CalibrationResult? _calibrationResult;
+        private Lut3D? _generatedLut;
+        private DisplayCharacterization? _displayCharacterization;
+        private CalibrationMetrics? _calibrationMetrics;
+
         // Window state for mode switching
         private WindowStyle _previousWindowStyle;
         private ResizeMode _previousResizeMode;
@@ -91,11 +98,6 @@ namespace HDRGammaController
         #endregion
 
         #region Events
-
-        /// <summary>
-        /// Raised when a patch measurement is needed.
-        /// </summary>
-        public event EventHandler<PatchMeasurementEventArgs>? PatchMeasurementRequested;
 
         /// <summary>
         /// Raised when calibration completes successfully.
@@ -420,6 +422,13 @@ namespace HDRGammaController
 
         private async void Start_Click(object sender, RoutedEventArgs e)
         {
+            if (_colorimeterService == null || _calibrationTarget == null)
+            {
+                MessageBox.Show("Colorimeter or calibration target not configured.",
+                    "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
             // Apply display mode
             ApplyDisplayMode();
 
@@ -427,66 +436,81 @@ namespace HDRGammaController
             SetupPanel.Visibility = Visibility.Collapsed;
             MeasurementPanel.Visibility = Visibility.Visible;
 
+            // Create the calibration orchestrator
+            _orchestrator = new CalibrationOrchestrator(
+                _colorimeterService,
+                _calibrationTarget,
+                _calibrationPreset,
+                settleTimeMs: 300,
+                maxRetries: 3,
+                hdrMode: false); // TODO: Detect HDR mode
+
+            // Wire up orchestrator events
+            _orchestrator.DisplayPatchRequested += Orchestrator_DisplayPatchRequested;
+            _orchestrator.ProgressChanged += Orchestrator_ProgressChanged;
+            _orchestrator.StateChanged += Orchestrator_StateChanged;
+            _orchestrator.MeasurementTaken += Orchestrator_MeasurementTaken;
+            _orchestrator.ErrorOccurred += Orchestrator_ErrorOccurred;
+            _orchestrator.CalibrationCompleted += Orchestrator_CalibrationCompleted;
+
             // Start calibration
             _isCalibrationRunning = true;
             _isPaused = false;
             _isCancelled = false;
             _currentPatchIndex = 0;
+            _totalPatches = _orchestrator.TotalPatches;
             _cancellationTokenSource = new CancellationTokenSource();
             _elapsedTimer.Restart();
 
             // Update initial progress
             UpdateProgress();
 
-            // Run calibration loop
+            // Run calibration via orchestrator
             await RunCalibrationAsync(_cancellationTokenSource.Token);
         }
 
         private async Task RunCalibrationAsync(CancellationToken cancellationToken)
         {
-            if (_patches == null) return;
+            if (_orchestrator == null) return;
 
             try
             {
-                for (_currentPatchIndex = 0; _currentPatchIndex < _patches.Count; _currentPatchIndex++)
+                // Run the calibration through the orchestrator
+                _calibrationResult = await _orchestrator.StartCalibrationAsync(cancellationToken);
+
+                // Process results if successful
+                if (_calibrationResult.Success && _calibrationResult.Measurements != null)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    // Wait while paused
-                    while (_isPaused && !_isCancelled)
-                    {
-                        await Task.Delay(100, cancellationToken);
-                    }
-
-                    if (_isCancelled) break;
-
-                    var patch = _patches[_currentPatchIndex];
-
-                    // Update UI
+                    // Generate the 3D LUT from measurements
                     Dispatcher.Invoke(() =>
                     {
-                        UpdateProgress();
-                        DisplayPatch(patch);
+                        PhaseText.Text = "Generating LUT...";
                     });
 
-                    // Wait for display to settle
-                    await Task.Delay(300, cancellationToken);
+                    var generator = new Lut3DGenerator(
+                        _calibrationTarget!,
+                        _calibrationResult.Measurements,
+                        lutSize: 17);
 
-                    // Request measurement
-                    var measurementArgs = new PatchMeasurementEventArgs(patch, _currentPatchIndex, _totalPatches);
-                    PatchMeasurementRequested?.Invoke(this, measurementArgs);
+                    _generatedLut = generator.Generate(progress =>
+                    {
+                        Dispatcher.Invoke(() =>
+                        {
+                            // Update progress for LUT generation phase (scaled from calibration 100% to 110%)
+                            CalibrationProgressBar.Value = 100;
+                            ProgressPercentText.Text = "Generating...";
+                        });
+                    });
 
-                    // Wait for measurement to complete (this would be handled externally)
-                    // For now, simulate a measurement delay
-                    await Task.Delay(200, cancellationToken);
-                }
+                    _displayCharacterization = generator.Characterization;
+                    _calibrationMetrics = generator.CalculateMetrics();
 
-                // Calibration complete
-                if (!_isCancelled)
-                {
                     Dispatcher.Invoke(() =>
                     {
-                        ShowCompletion(true, $"{_totalPatches} patches measured successfully in {FormatElapsedTime(_elapsedTimer.Elapsed)}");
+                        string gradeStr = _calibrationMetrics?.GetGrade().ToString() ?? "?";
+                        ShowCompletion(true,
+                            $"{_calibrationResult.Measurements.Count} patches measured in {FormatElapsedTime(_calibrationResult.TotalTime)}\n" +
+                            $"Average Delta E: {_calibrationMetrics?.AverageDeltaE:F2} (Grade: {gradeStr})");
                     });
 
                     if (SoundNotificationsCheck.IsChecked == true)
@@ -496,16 +520,35 @@ namespace HDRGammaController
 
                     CalibrationCompleted?.Invoke(this, new CalibrationCompleteEventArgs(true, null));
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                if (!_isCancelled)
+                else if (_calibrationResult.WasCancelled)
                 {
                     Dispatcher.Invoke(() =>
                     {
                         ShowCompletion(false, "Calibration was cancelled");
                     });
+                    CalibrationCancelled?.Invoke(this, EventArgs.Empty);
                 }
+                else
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        ShowCompletion(false, $"Calibration failed: {_calibrationResult.Message}");
+                    });
+
+                    if (SoundNotificationsCheck.IsChecked == true)
+                    {
+                        SystemSounds.Hand.Play();
+                    }
+
+                    CalibrationCompleted?.Invoke(this, new CalibrationCompleteEventArgs(false, _calibrationResult.Message));
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    ShowCompletion(false, "Calibration was cancelled");
+                });
                 CalibrationCancelled?.Invoke(this, EventArgs.Empty);
             }
             catch (Exception ex)
@@ -526,12 +569,122 @@ namespace HDRGammaController
             {
                 _isCalibrationRunning = false;
                 _elapsedTimer.Stop();
+                UnwireOrchestratorEvents();
             }
         }
+
+        #region Orchestrator Event Handlers
+
+        private void Orchestrator_DisplayPatchRequested(object? sender, DisplayPatchEventArgs e)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                DisplayPatch(e.Patch);
+            });
+        }
+
+        private void Orchestrator_ProgressChanged(object? sender, CalibrationProgressEventArgs e)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                _currentPatchIndex = e.CurrentIndex;
+                _totalPatches = e.TotalPatches;
+
+                CalibrationProgressBar.Value = e.ProgressPercent;
+                ProgressPercentText.Text = $"{e.ProgressPercent:F0}%";
+                PatchInfoText.Text = $"Patch {e.CurrentIndex + 1} of {e.TotalPatches}";
+
+                if (e.CurrentPatch != null)
+                {
+                    CurrentPatchText.Text = e.CurrentPatch.Name ?? GetPatchDescription(e.CurrentPatch);
+                    PhaseText.Text = e.CurrentPatch.Category.ToString();
+                }
+
+                if (e.NextPatch != null)
+                {
+                    NextPatchText.Text = e.NextPatch.Name ?? GetPatchDescription(e.NextPatch);
+                }
+                else
+                {
+                    NextPatchText.Text = "(last patch)";
+                }
+
+                TimeInfoText.Text = $"Elapsed: {FormatElapsedTime(e.Elapsed)} • Remaining: ~{FormatElapsedTime(e.EstimatedRemaining)}";
+            });
+        }
+
+        private void Orchestrator_StateChanged(object? sender, CalibrationStateEventArgs e)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                _isPaused = e.NewState == CalibrationState.Paused;
+
+                switch (e.NewState)
+                {
+                    case CalibrationState.Paused:
+                        PauseOverlay.Visibility = Visibility.Visible;
+                        PauseButton.Content = "⏸ Paused";
+                        PauseButton.IsEnabled = false;
+                        break;
+                    case CalibrationState.Running:
+                        PauseOverlay.Visibility = Visibility.Collapsed;
+                        PauseButton.Content = "⏸ Pause";
+                        PauseButton.IsEnabled = true;
+                        break;
+                }
+            });
+        }
+
+        private void Orchestrator_MeasurementTaken(object? sender, MeasurementEventArgs e)
+        {
+            // Could update UI with measurement details if needed
+            Dispatcher.Invoke(() =>
+            {
+                // Optional: Show measurement info
+            });
+        }
+
+        private void Orchestrator_ErrorOccurred(object? sender, CalibrationErrorEventArgs e)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                // Show error in status but don't stop (unless fatal)
+                if (e.IsFatal)
+                {
+                    ShowCompletion(false, e.Message);
+                }
+                else
+                {
+                    // Show retry message temporarily
+                    TimeInfoText.Text = e.Message;
+                }
+            });
+        }
+
+        private void Orchestrator_CalibrationCompleted(object? sender, CalibrationResultEventArgs e)
+        {
+            // Main completion handling is in RunCalibrationAsync
+        }
+
+        private void UnwireOrchestratorEvents()
+        {
+            if (_orchestrator != null)
+            {
+                _orchestrator.DisplayPatchRequested -= Orchestrator_DisplayPatchRequested;
+                _orchestrator.ProgressChanged -= Orchestrator_ProgressChanged;
+                _orchestrator.StateChanged -= Orchestrator_StateChanged;
+                _orchestrator.MeasurementTaken -= Orchestrator_MeasurementTaken;
+                _orchestrator.ErrorOccurred -= Orchestrator_ErrorOccurred;
+                _orchestrator.CalibrationCompleted -= Orchestrator_CalibrationCompleted;
+            }
+        }
+
+        #endregion
 
         private void Pause_Click(object sender, RoutedEventArgs e)
         {
             _isPaused = true;
+            _orchestrator?.Pause();
             PauseOverlay.Visibility = Visibility.Visible;
             PauseButton.Content = "⏸ Paused";
             PauseButton.IsEnabled = false;
@@ -547,6 +700,7 @@ namespace HDRGammaController
             }
 
             _isPaused = false;
+            _orchestrator?.Resume();
             PauseOverlay.Visibility = Visibility.Collapsed;
             PauseButton.Content = "⏸ Pause";
             PauseButton.IsEnabled = true;
@@ -564,6 +718,7 @@ namespace HDRGammaController
             if (result == MessageBoxResult.Yes)
             {
                 _isCancelled = true;
+                _orchestrator?.Cancel();
                 _cancellationTokenSource?.Cancel();
                 Close();
             }
@@ -581,7 +736,47 @@ namespace HDRGammaController
 
         private void ViewReport_Click(object sender, RoutedEventArgs e)
         {
-            // TODO: Open calibration report window
+            if (_calibrationResult?.Success != true || _calibrationTarget == null)
+            {
+                MessageBox.Show("No calibration data available.", "Error",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            // Create a calibration profile from the results
+            var profile = new CalibrationProfile
+            {
+                MonitorDevicePath = "calibration_session", // Session-based, not persisted yet
+                MonitorName = "Calibrated Display", // TODO: Get actual monitor name from CalibrationSetupWindow
+                Target = _calibrationTarget,
+                LutSize = 17,
+                PatchCount = _calibrationResult.Measurements?.Count ?? 0,
+                ColorimeterModel = _colorimeterService?.ConnectedColorimeter?.Model,
+                LastCalibratedAt = DateTime.UtcNow,
+                PostCalibrationDeltaE = _calibrationMetrics?.AverageDeltaE,
+                QualityGrade = _calibrationMetrics?.GetGrade(),
+                CorrectionLut = _generatedLut
+            };
+
+            // Populate measured characteristics if available (MeasuredCct/MeasuredDuv are computed from MeasuredWhite)
+            if (_displayCharacterization != null)
+            {
+                profile.MeasuredCharacteristics = new DisplayCharacteristics
+                {
+                    MeasuredRed = _displayCharacterization.RedPrimary,
+                    MeasuredGreen = _displayCharacterization.GreenPrimary,
+                    MeasuredBlue = _displayCharacterization.BluePrimary,
+                    MeasuredWhite = _displayCharacterization.WhitePoint,
+                    PeakLuminance = _displayCharacterization.PeakLuminance,
+                    BlackLevel = _displayCharacterization.BlackLevel,
+                    MeasuredGamma = _displayCharacterization.MeasuredGamma
+                };
+            }
+
+            // Open the report window
+            var reportWindow = new CalibrationReportWindow(profile, _calibrationMetrics, _displayCharacterization, _generatedLut);
+            reportWindow.Show();
+
             Close();
         }
 
@@ -741,23 +936,6 @@ namespace HDRGammaController
     }
 
     #region Event Args
-
-    /// <summary>
-    /// Event arguments for patch measurement requests.
-    /// </summary>
-    public class PatchMeasurementEventArgs : EventArgs
-    {
-        public ColorPatch Patch { get; }
-        public int PatchIndex { get; }
-        public int TotalPatches { get; }
-
-        public PatchMeasurementEventArgs(ColorPatch patch, int patchIndex, int totalPatches)
-        {
-            Patch = patch;
-            PatchIndex = patchIndex;
-            TotalPatches = totalPatches;
-        }
-    }
 
     /// <summary>
     /// Event arguments for calibration completion.
