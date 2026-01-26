@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using HDRGammaController.Core;
@@ -35,6 +38,11 @@ namespace HDRGammaController
         public MonitorInfo? SelectedMonitor { get; private set; }
 
         /// <summary>
+        /// Gets the selected display type after the dialog completes.
+        /// </summary>
+        public DisplayType SelectedDisplayType { get; private set; }
+
+        /// <summary>
         /// Gets the initialized colorimeter service.
         /// </summary>
         public ColorimeterService? ColorimeterService => _colorimeterService;
@@ -60,24 +68,86 @@ namespace HDRGammaController
 
         private async Task InitializeColorimeterAsync()
         {
-            StatusText.Text = "Searching for colorimeter...";
+            StatusText.Text = "Finding ArgyllCMS...";
             StatusIndicator.Fill = new SolidColorBrush(Color.FromRgb(255, 165, 0)); // Orange
+            ColorimeterModelText.Text = "";
 
             try
             {
-                // Find ArgyllCMS bin path
-                string? argyllBinPath = FindArgyllBinPath();
-                if (string.IsNullOrEmpty(argyllBinPath))
+                string? argyllBinPath;
+
+                // First check if we have our own downloaded version (preferred)
+                if (ArgyllDownloader.IsInstalled())
                 {
-                    StatusText.Text = "ArgyllCMS not found";
+                    argyllBinPath = ArgyllDownloader.LocalArgyllBinDir;
+                    Console.WriteLine($"CalibrationSetupWindow: Using our downloaded ArgyllCMS from {argyllBinPath}");
+                }
+                else
+                {
+                    // Check if there's any ArgyllCMS available (might be old version from DisplayCAL)
+                    argyllBinPath = FindArgyllBinPath();
+
+                    if (string.IsNullOrEmpty(argyllBinPath))
+                    {
+                        // No ArgyllCMS found at all - offer to download
+                        await OfferArgyllDownloadAsync("ArgyllCMS (required for colorimeter calibration) was not found.");
+                    }
+                    else
+                    {
+                        // Found some ArgyllCMS, but it might be old - check the version
+                        string versionInfo = ExtractVersionFromPath(argyllBinPath);
+                        if (IsOldVersion(versionInfo))
+                        {
+                            // Old version found - offer to download newer
+                            Console.WriteLine($"CalibrationSetupWindow: Found old ArgyllCMS version: {versionInfo}");
+                            await OfferArgyllDownloadAsync(
+                                $"Found ArgyllCMS {versionInfo}, but a newer version ({ArgyllDownloader.ArgyllVersion}) is recommended for better compatibility.");
+                        }
+                    }
+
+                    // After potential download, prefer our version if now installed
+                    if (ArgyllDownloader.IsInstalled())
+                    {
+                        argyllBinPath = ArgyllDownloader.LocalArgyllBinDir;
+                    }
+                    else
+                    {
+                        // Re-check in case download failed and we need fallback
+                        argyllBinPath = FindArgyllBinPath();
+                    }
+
+                    if (string.IsNullOrEmpty(argyllBinPath))
+                    {
+                        StatusText.Text = "ArgyllCMS not installed";
+                        StatusIndicator.Fill = new SolidColorBrush(Color.FromRgb(239, 68, 68)); // Red
+                        ColorimeterModelText.Text = "Click Refresh to try downloading again";
+                        StartButton.IsEnabled = false;
+                        return;
+                    }
+                }
+
+                // Show that we found ArgyllCMS and log the version info
+                StatusText.Text = "Searching for colorimeter...";
+                string binDirName = Path.GetFileName(Path.GetDirectoryName(argyllBinPath) ?? argyllBinPath);
+                ColorimeterModelText.Text = $"Using: {binDirName}";
+                Console.WriteLine($"CalibrationSetupWindow: Using ArgyllCMS from {argyllBinPath}");
+
+                _colorimeterService = new ColorimeterService(argyllBinPath);
+
+                // Add timeout for initialization
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                try
+                {
+                    await _colorimeterService.InitializeAsync(cts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    StatusText.Text = "Detection timed out";
                     StatusIndicator.Fill = new SolidColorBrush(Color.FromRgb(239, 68, 68)); // Red
-                    ColorimeterModelText.Text = "Please install ArgyllCMS or configure its path";
+                    ColorimeterModelText.Text = "Check colorimeter connection and USB drivers";
                     StartButton.IsEnabled = false;
                     return;
                 }
-
-                _colorimeterService = new ColorimeterService(argyllBinPath);
-                await _colorimeterService.InitializeAsync();
 
                 UpdateColorimeterStatus();
             }
@@ -85,79 +155,76 @@ namespace HDRGammaController
             {
                 StatusText.Text = $"Error: {ex.Message}";
                 StatusIndicator.Fill = new SolidColorBrush(Color.FromRgb(239, 68, 68)); // Red
+                ColorimeterModelText.Text = "Check console for details";
+                Console.WriteLine($"Colorimeter initialization error: {ex}");
                 StartButton.IsEnabled = false;
+            }
+        }
+
+        /// <summary>
+        /// Extracts version string from ArgyllCMS path (e.g., "V2.3.1" from path containing "Argyll_V2.3.1").
+        /// </summary>
+        private static string ExtractVersionFromPath(string path)
+        {
+            // Look for pattern like "Argyll_V2.3.1" or "Argyll_V3.3.0" in path
+            var match = Regex.Match(path, @"Argyll_V?(\d+\.\d+\.?\d*)", RegexOptions.IgnoreCase);
+            if (match.Success)
+                return "V" + match.Groups[1].Value;
+            return "unknown";
+        }
+
+        /// <summary>
+        /// Checks if the given version is older than our minimum recommended version (V3.0.0).
+        /// </summary>
+        private static bool IsOldVersion(string versionInfo)
+        {
+            // Consider anything below V3.0.0 as "old"
+            if (versionInfo == "unknown")
+                return true;
+
+            var match = Regex.Match(versionInfo, @"V?(\d+)\.(\d+)");
+            if (!match.Success)
+                return true;
+
+            int major = int.Parse(match.Groups[1].Value);
+            // V3.0.0+ is considered modern
+            return major < 3;
+        }
+
+        private async Task OfferArgyllDownloadAsync(string reason)
+        {
+            // Check if we should offer download
+            if (ArgyllDownloader.IsInstalled())
+            {
+                // Already have our version installed, nothing to do
+                return;
+            }
+
+            // Show styled download dialog
+            var dialog = new ArgyllDownloadDialog(reason)
+            {
+                Owner = this
+            };
+
+            var dialogResult = dialog.ShowDialog();
+
+            if (dialog.DownloadSucceeded)
+            {
+                StatusText.Text = "Download complete";
+                StatusIndicator.Fill = new SolidColorBrush(Color.FromRgb(34, 197, 94)); // Green
+                ColorimeterModelText.Text = "ArgyllCMS installed successfully";
+            }
+            else if (dialogResult == false)
+            {
+                // User cancelled or download failed - status will be updated by caller
+                Console.WriteLine("ArgyllCMS download was cancelled or failed");
             }
         }
 
         private static string? FindArgyllBinPath()
         {
-            // Search in common locations
-            var searchPaths = new[]
-            {
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "HDRGammaController", "Argyll", "bin"),
-                @"C:\Program Files\Argyll\bin",
-                @"C:\Program Files (x86)\Argyll\bin",
-                @"C:\Argyll\bin",
-            };
-
-            foreach (var path in searchPaths)
-            {
-                if (Directory.Exists(path) && File.Exists(Path.Combine(path, "spotread.exe")))
-                {
-                    return path;
-                }
-            }
-
-            // Check DisplayCAL's bundled ArgyllCMS
-            try
-            {
-                string displayCalDir = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                    "DisplayCAL");
-
-                if (Directory.Exists(displayCalDir))
-                {
-                    foreach (var argyllDir in Directory.GetDirectories(displayCalDir, "Argyll_*"))
-                    {
-                        string binPath = Path.Combine(argyllDir, "bin");
-                        if (File.Exists(Path.Combine(binPath, "spotread.exe")))
-                        {
-                            return binPath;
-                        }
-                    }
-                }
-            }
-            catch
-            {
-                // Ignore errors when searching
-            }
-
-            // Check local app data HDRGammaController/Argyll
-            try
-            {
-                string localArgyllDir = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "HDRGammaController", "Argyll");
-
-                if (Directory.Exists(localArgyllDir))
-                {
-                    foreach (var versionDir in Directory.GetDirectories(localArgyllDir, "Argyll_*"))
-                    {
-                        string binPath = Path.Combine(versionDir, "bin");
-                        if (File.Exists(Path.Combine(binPath, "spotread.exe")))
-                        {
-                            return binPath;
-                        }
-                    }
-                }
-            }
-            catch
-            {
-                // Ignore errors when searching
-            }
-
-            return null;
+            // Use unified path finder for consistent behavior across the application
+            return ArgyllPathFinder.FindArgyllBinPath();
         }
 
         private void UpdateColorimeterStatus()
@@ -220,12 +287,28 @@ namespace HDRGammaController
             {
                 SelectedMonitor = selectedItem.Monitor;
             }
+            else
+            {
+                // Fallback: try to get first monitor if selection failed
+                Console.WriteLine($"MonitorComboBox.SelectedItem type: {MonitorComboBox.SelectedItem?.GetType().Name ?? "null"}");
+                if (_monitors.Count > 0)
+                {
+                    SelectedMonitor = _monitors[0];
+                    Console.WriteLine($"Falling back to first monitor: {SelectedMonitor.FriendlyName}");
+                }
+            }
 
             // Get selected target
             SelectedTarget = GetSelectedTarget();
 
             // Get selected preset
             SelectedPreset = GetSelectedPreset();
+
+            // Get selected display type and apply to colorimeter service
+            SelectedDisplayType = GetSelectedDisplayType();
+            _colorimeterService?.SetDisplayType(SelectedDisplayType);
+
+            Console.WriteLine($"Start_Click: Monitor={SelectedMonitor?.FriendlyName ?? "null"}, Target={SelectedTarget?.Name ?? "null"}, DisplayType={SelectedDisplayType}, Colorimeter={(_colorimeterService != null ? "present" : "null")}");
 
             DialogResult = true;
             Close();
@@ -255,6 +338,18 @@ namespace HDRGammaController
                 return CalibrationPreset.Thorough;
 
             return CalibrationPreset.Standard;
+        }
+
+        private DisplayType GetSelectedDisplayType()
+        {
+            if (DisplayTypeOled.IsChecked == true)
+                return DisplayType.Oled;
+            if (DisplayTypeWideGamut.IsChecked == true)
+                return DisplayType.LcdWideGamut;
+            if (DisplayTypeCcfl.IsChecked == true)
+                return DisplayType.LcdCcfl;
+
+            return DisplayType.LcdLed; // Default
         }
 
         private void Cancel_Click(object sender, RoutedEventArgs e)

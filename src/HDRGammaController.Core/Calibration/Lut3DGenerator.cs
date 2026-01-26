@@ -651,6 +651,71 @@ namespace HDRGammaController.Core.Calibration
             double t = (x - p0.input) / (p1.input - p0.input);
             return p0.output + t * (p1.output - p0.output);
         }
+
+        #region Serialization
+
+        /// <summary>
+        /// Exports the tone curve to an array for serialization.
+        /// For gamma-based curves, generates the equivalent LUT.
+        /// </summary>
+        public double[] ToArray()
+        {
+            if (_useLut && _lookupTable != null)
+            {
+                return (double[])_lookupTable.Clone();
+            }
+
+            // Generate LUT from gamma curve
+            var lut = new double[LutSize];
+            for (int i = 0; i < LutSize; i++)
+            {
+                double x = i / (double)(LutSize - 1);
+                lut[i] = Math.Pow(x, _gamma);
+            }
+            return lut;
+        }
+
+        /// <summary>
+        /// Creates a tone curve from a serialized array.
+        /// </summary>
+        /// <param name="data">The LUT data (expected to be normalized 0-1 values).</param>
+        /// <param name="enforceMonotonic">If true, corrects non-monotonic segments.</param>
+        public static ToneCurve CreateFromArray(double[] data, bool enforceMonotonic = false)
+        {
+            if (data == null || data.Length < 2)
+                return CreateGamma(2.2);
+
+            // Resample if needed to match LutSize
+            double[] lut;
+            if (data.Length == LutSize)
+            {
+                lut = (double[])data.Clone();
+            }
+            else
+            {
+                lut = new double[LutSize];
+                for (int i = 0; i < LutSize; i++)
+                {
+                    double srcIndex = i * (data.Length - 1) / (double)(LutSize - 1);
+                    int i0 = (int)srcIndex;
+                    int i1 = Math.Min(i0 + 1, data.Length - 1);
+                    double frac = srcIndex - i0;
+                    lut[i] = data[i0] + frac * (data[i1] - data[i0]);
+                }
+            }
+
+            bool isMonotonic = CheckMonotonicity(lut);
+
+            if (!isMonotonic && enforceMonotonic)
+            {
+                EnforceMonotonicity(lut);
+                isMonotonic = true;
+            }
+
+            return new ToneCurve(lut, isMonotonic);
+        }
+
+        #endregion
     }
 
     /// <summary>

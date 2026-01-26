@@ -373,14 +373,39 @@ namespace HDRGammaController.ViewModels
         private void OpenCalibration()
         {
             var setupWindow = new CalibrationSetupWindow(_activeMonitors);
-            if (setupWindow.ShowDialog() == true &&
+            var dialogResult = setupWindow.ShowDialog();
+
+            if (dialogResult == true &&
                 setupWindow.SelectedTarget != null &&
-                setupWindow.ColorimeterService != null)
+                setupWindow.ColorimeterService != null &&
+                setupWindow.SelectedMonitor != null)
             {
+                // Create state manager to handle bypass/restore during calibration
+                var stateManager = new CalibrationStateManager(_dispwinRunner, _nightModeService);
+
+                // Get current settings for the selected monitor
+                var profile = _settingsManager.GetMonitorProfile(setupWindow.SelectedMonitor.MonitorDevicePath);
+                var currentMode = profile?.GammaMode ?? setupWindow.SelectedMonitor.CurrentGamma;
+                var currentSettings = profile?.ToCalibrationSettings();
+
                 var calibrationWindow = new CalibrationWindow(
                     setupWindow.ColorimeterService,
                     setupWindow.SelectedTarget,
-                    setupWindow.SelectedPreset);
+                    setupWindow.SelectedPreset,
+                    stateManager,
+                    setupWindow.SelectedMonitor,
+                    currentMode,
+                    currentSettings);
+
+                // Handle calibration completion to refresh our state
+                calibrationWindow.CalibrationCompleted += (s, e) =>
+                {
+                    if (e.Success)
+                    {
+                        // Refresh monitors to pick up any new calibration data
+                        RefreshMonitors();
+                    }
+                };
 
                 calibrationWindow.Show();
             }

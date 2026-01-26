@@ -1,29 +1,16 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.IO.Compression;
-using System.Net.Http;
-using System.Security.Cryptography;
 using System.Text;
 using System.Globalization;
-using System.Threading.Tasks;
 using System.Windows;
+using HDRGammaController.Core.Calibration;
 
 namespace HDRGammaController.Core
 {
     public class DispwinRunner
     {
         private string _dispwinPath;
-        
-        // URL for ArgyllCMS Windows binaries
-        private const string ArgyllDownloadUrl = "https://www.argyllcms.com/Argyll_V3.3.0_win64_exe.zip";
-        private const string ArgyllVersion = "Argyll_V3.3.0";
-        // SHA256 checksum for integrity verification (update when ArgyllCMS version changes)
-        private const string ArgyllExpectedSha256 = ""; // Empty = skip verification (set to actual hash when known)
-        
-        private static readonly string LocalArgyllDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "HDRGammaController", "Argyll");
 
         public DispwinRunner()
         {
@@ -37,7 +24,7 @@ namespace HDRGammaController.Core
             // Only search controlled/admin-protected locations
 
             // 1. Search in our local app data directory (controlled by this app)
-            string localAppData = Path.Combine(LocalArgyllDir, "bin", "dispwin.exe");
+            string localAppData = Path.Combine(ArgyllDownloader.LocalArgyllBinDir, "dispwin.exe");
             if (File.Exists(localAppData))
             {
                 Console.WriteLine($"DispwinRunner: Found dispwin in LocalAppData: {localAppData}");
@@ -47,11 +34,15 @@ namespace HDRGammaController.Core
             // 2. Search common Program Files locations (admin-protected)
             var trustedPaths = new[]
             {
+                @"C:\Program Files\ArgyllCMS\bin\dispwin.exe",
+                @"C:\Program Files (x86)\ArgyllCMS\bin\dispwin.exe",
+                @"C:\Program Files\Argyll_V3.3.0\bin\dispwin.exe",
                 @"C:\Program Files\DisplayCAL\Argyll\bin\dispwin.exe",
                 @"C:\Program Files (x86)\DisplayCAL\Argyll\bin\dispwin.exe",
                 @"C:\Program Files\Argyll\bin\dispwin.exe",
                 @"C:\Program Files (x86)\Argyll\bin\dispwin.exe",
-                @"C:\Argyll\bin\dispwin.exe"  // Less secure but common install location
+                @"C:\Argyll\bin\dispwin.exe",
+                @"C:\ArgyllCMS\bin\dispwin.exe"
             };
 
             foreach (var path in trustedPaths)
@@ -129,27 +120,27 @@ namespace HDRGammaController.Core
         public bool EnsureConfigured()
         {
             if (!string.IsNullOrEmpty(_dispwinPath)) return true;
-            
+
             // Try detection again
             _dispwinPath = FindDispwin();
             if (!string.IsNullOrEmpty(_dispwinPath)) return true;
 
-            // Offer to auto-download
+            // Offer to auto-download using shared ArgyllDownloader
             var result = MessageBox.Show(
                 "ArgyllCMS 'dispwin.exe' not found.\n\n" +
                 "This application requires ArgyllCMS to apply gamma tables.\n" +
-                "Would you like to download ArgyllCMS automatically?\n\n" +
+                $"Would you like to download ArgyllCMS {ArgyllDownloader.ArgyllVersion} automatically?\n\n" +
                 "(This will download ~15MB from argyllcms.com)",
                 "HDR Gamma Controller - Missing Dependency",
                 MessageBoxButton.YesNo, MessageBoxImage.Question);
-                
+
             if (result == MessageBoxResult.Yes)
             {
                 // Run download async but block UI with a wait dialog
                 bool success = false;
                 try
                 {
-                    var downloadTask = DownloadArgyllAsync();
+                    var downloadTask = ArgyllDownloader.DownloadAsync();
                     // Simple blocking wait - in production would show progress dialog
                     downloadTask.Wait();
                     success = downloadTask.Result;
@@ -159,7 +150,7 @@ namespace HDRGammaController.Core
                     Console.WriteLine($"DispwinRunner: Download failed: {ex.Message}");
                     MessageBox.Show($"Download failed:\n{ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
-                
+
                 if (success)
                 {
                     _dispwinPath = FindDispwin();
@@ -170,120 +161,8 @@ namespace HDRGammaController.Core
                     }
                 }
             }
-            
+
             return false;
-        }
-        
-        /// <summary>
-        /// Downloads and extracts ArgyllCMS binaries to LocalApplicationData.
-        /// Verifies SHA256 checksum if configured.
-        /// </summary>
-        public async Task<bool> DownloadArgyllAsync()
-        {
-            string? tempDir = null;
-            try
-            {
-                Console.WriteLine($"DispwinRunner: Downloading ArgyllCMS from {ArgyllDownloadUrl}");
-
-                // Create temp directory with unique name to prevent collisions
-                tempDir = Path.Combine(Path.GetTempPath(), $"HDRGammaController_ArgyllDownload_{Guid.NewGuid():N}");
-                Directory.CreateDirectory(tempDir);
-                string zipPath = Path.Combine(tempDir, "argyll.zip");
-
-                // Download
-                using (var client = new HttpClient())
-                {
-                    client.Timeout = TimeSpan.FromMinutes(5);
-                    var response = await client.GetAsync(ArgyllDownloadUrl);
-                    response.EnsureSuccessStatusCode();
-
-                    using (var fs = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None))
-                    {
-                        await response.Content.CopyToAsync(fs);
-                    }
-                }
-
-                Console.WriteLine($"DispwinRunner: Downloaded to {zipPath}");
-
-                // SECURITY: Verify SHA256 checksum if configured
-                if (!string.IsNullOrEmpty(ArgyllExpectedSha256))
-                {
-                    string actualHash = ComputeSha256(zipPath);
-                    if (!actualHash.Equals(ArgyllExpectedSha256, StringComparison.OrdinalIgnoreCase))
-                    {
-                        Console.WriteLine($"DispwinRunner: SECURITY WARNING - Hash mismatch! Expected: {ArgyllExpectedSha256}, Got: {actualHash}");
-                        throw new InvalidOperationException(
-                            $"Downloaded file failed integrity check.\nExpected SHA256: {ArgyllExpectedSha256}\nActual SHA256: {actualHash}");
-                    }
-                    Console.WriteLine($"DispwinRunner: SHA256 checksum verified: {actualHash}");
-                }
-                else
-                {
-                    Console.WriteLine("DispwinRunner: WARNING - No checksum configured, skipping verification");
-                }
-                
-                // Extract
-                Directory.CreateDirectory(LocalArgyllDir);
-                
-                // The ZIP contains Argyll_V3.3.0/bin/dispwin.exe
-                // We want to extract to LocalArgyllDir so it becomes LocalArgyllDir/bin/dispwin.exe
-                using (var archive = ZipFile.OpenRead(zipPath))
-                {
-                    foreach (var entry in archive.Entries)
-                    {
-                        // Strip the first directory component (Argyll_V3.3.0/)
-                        string entryPath = entry.FullName;
-                        if (entryPath.StartsWith(ArgyllVersion + "/") || entryPath.StartsWith(ArgyllVersion + "\\"))
-                        {
-                            entryPath = entryPath.Substring(ArgyllVersion.Length + 1);
-                        }
-                        
-                        if (string.IsNullOrEmpty(entryPath)) continue;
-                        
-                        string destPath = Path.Combine(LocalArgyllDir, entryPath);
-                        
-                        if (entry.FullName.EndsWith("/") || entry.FullName.EndsWith("\\"))
-                        {
-                            // Directory
-                            Directory.CreateDirectory(destPath);
-                        }
-                        else
-                        {
-                            // File
-                            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
-                            entry.ExtractToFile(destPath, overwrite: true);
-                        }
-                    }
-                }
-                
-                Console.WriteLine($"DispwinRunner: Extracted to {LocalArgyllDir}");
-                return true;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"DispwinRunner: DownloadArgyllAsync failed: {ex}");
-                throw;
-            }
-            finally
-            {
-                // Always cleanup temp directory
-                if (tempDir != null && Directory.Exists(tempDir))
-                {
-                    try { Directory.Delete(tempDir, true); }
-                    catch (Exception ex) { Console.WriteLine($"DispwinRunner: Failed to cleanup temp dir: {ex.Message}"); }
-                }
-            }
-        }
-
-        /// <summary>
-        /// Computes SHA256 hash of a file.
-        /// </summary>
-        private static string ComputeSha256(string filePath)
-        {
-            using var sha256 = SHA256.Create();
-            using var stream = File.OpenRead(filePath);
-            byte[] hash = sha256.ComputeHash(stream);
-            return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
         }
 
         public void ApplyGamma(MonitorInfo monitor, GammaMode mode, double whiteLevel)
@@ -293,19 +172,55 @@ namespace HDRGammaController.Core
         
         public void ApplyGamma(MonitorInfo monitor, GammaMode mode, double whiteLevel, CalibrationSettings calibration)
         {
-            Console.WriteLine($"DispwinRunner.ApplyGamma: monitor={monitor.DeviceName}, mode={mode}, whiteLevel={whiteLevel}, hasCalibration={calibration.HasAdjustments}");
-            
+            ApplyGamma(monitor, mode, whiteLevel, calibration, null);
+        }
+
+        /// <summary>
+        /// Applies gamma correction using optional calibration profile for accurate color reproduction.
+        /// </summary>
+        /// <param name="monitor">Target monitor.</param>
+        /// <param name="mode">Gamma mode to apply.</param>
+        /// <param name="whiteLevel">SDR white level in nits.</param>
+        /// <param name="calibration">User calibration settings (brightness, temperature, etc.).</param>
+        /// <param name="calibrationProfile">Optional display calibration profile for color-accurate correction.</param>
+        public void ApplyGamma(MonitorInfo monitor, GammaMode mode, double whiteLevel, CalibrationSettings calibration, DisplayCalibrationProfile? calibrationProfile)
+        {
+            bool hasProfile = calibrationProfile != null;
+            Console.WriteLine($"DispwinRunner.ApplyGamma: monitor={monitor.DeviceName}, mode={mode}, whiteLevel={whiteLevel}, hasCalibration={calibration.HasAdjustments}, hasProfile={hasProfile}");
+
             if (!EnsureConfigured())
             {
                 Console.WriteLine("DispwinRunner.ApplyGamma: Not configured, aborting.");
                 return;
             }
 
-            // 1. Generate per-channel LUTs
-            var (lutR, lutG, lutB, _) = LutGenerator.GenerateLut(mode, whiteLevel, calibration, monitor.IsHdrActive);
+            // Generate LUTs - use calibrated version if profile is available
+            double[] lutR, lutG, lutB;
+
+            if (calibrationProfile != null)
+            {
+                // Calibrated mode: Use measured display characteristics for accurate gamma compensation
+                double targetGamma = GammaModeToValue(mode);
+                var characterization = calibrationProfile.ToCharacterization();
+
+                Console.WriteLine($"DispwinRunner.ApplyGamma: Using calibration profile '{calibrationProfile.Name}' (mode={calibrationProfile.Mode})");
+
+                (lutR, lutG, lutB, _) = LutGenerator.GenerateCalibratedLut(
+                    targetGamma,
+                    characterization,
+                    calibration,
+                    whiteLevel,
+                    monitor.IsHdrActive);
+            }
+            else
+            {
+                // Standard mode: Use gamma curve without measured display response
+                (lutR, lutG, lutB, _) = LutGenerator.GenerateLut(mode, whiteLevel, calibration, monitor.IsHdrActive);
+            }
+
             Console.WriteLine($"DispwinRunner.ApplyGamma: Generated LUTs with {lutR.Length} entries");
 
-            // 2. Create .cal file content
+            // Create .cal file content
             // SECURITY: Use GUID-based filename to prevent race conditions
             // (GetTempFileName + ChangeExtension creates a race between file creation and use)
             string calContent = GenerateCalContent(lutR, lutG, lutB);
@@ -342,6 +257,20 @@ namespace HDRGammaController.Core
                     Console.WriteLine($"DispwinRunner.ApplyGamma: Failed to cleanup temp file: {ex.Message}");
                 }
             }
+        }
+
+        /// <summary>
+        /// Converts GammaMode enum to numeric gamma value.
+        /// </summary>
+        private static double GammaModeToValue(GammaMode mode)
+        {
+            return mode switch
+            {
+                GammaMode.WindowsDefault => 1.0,  // Linear / bypass
+                GammaMode.Gamma22 => 2.2,
+                GammaMode.Gamma24 => 2.4,
+                _ => 2.2
+            };
         }
 
         public void ClearGamma(MonitorInfo monitor)

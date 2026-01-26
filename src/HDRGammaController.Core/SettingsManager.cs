@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using HDRGammaController.Core.Calibration;
 
 namespace HDRGammaController.Core
 {
@@ -32,6 +34,18 @@ namespace HDRGammaController.Core
         public double RedOffset { get; set; } = 0.0;
         public double GreenOffset { get; set; } = 0.0;
         public double BlueOffset { get; set; } = 0.0;
+
+        /// <summary>
+        /// ID of the active calibration profile for this monitor.
+        /// Null if no calibration profile is active.
+        /// </summary>
+        public string? CalibrationProfileId { get; set; }
+
+        /// <summary>
+        /// Whether to use the calibration profile for gamma adjustments (Adaptive mode).
+        /// When true, gamma switching uses the measured display response for accurate compensation.
+        /// </summary>
+        public bool UseCalibrationForGamma { get; set; } = true;
         
         public CalibrationSettings ToCalibrationSettings() => new CalibrationSettings
         {
@@ -291,6 +305,133 @@ namespace HDRGammaController.Core
             _data.ExcludedApps = apps ?? new List<AppExclusionRule>();
             Save();
         }
+
+        #region Calibration Profile Management
+
+        private static readonly string CalibrationProfilesPath = Path.Combine(AppDataPath, "CalibrationProfiles");
+
+        /// <summary>
+        /// Saves a calibration profile to disk.
+        /// </summary>
+        public void SaveCalibrationProfile(DisplayCalibrationProfile profile)
+        {
+            if (profile == null) throw new ArgumentNullException(nameof(profile));
+
+            Directory.CreateDirectory(CalibrationProfilesPath);
+            string filePath = Path.Combine(CalibrationProfilesPath, $"{profile.Id}.json");
+            profile.SaveToFile(filePath);
+            Console.WriteLine($"SettingsManager: Saved calibration profile '{profile.Name}' to {filePath}");
+        }
+
+        /// <summary>
+        /// Loads a calibration profile by ID.
+        /// </summary>
+        public DisplayCalibrationProfile? LoadCalibrationProfile(string profileId)
+        {
+            if (string.IsNullOrEmpty(profileId)) return null;
+
+            string filePath = Path.Combine(CalibrationProfilesPath, $"{profileId}.json");
+            if (!File.Exists(filePath))
+            {
+                Console.WriteLine($"SettingsManager: Calibration profile not found: {filePath}");
+                return null;
+            }
+
+            var profile = DisplayCalibrationProfile.LoadFromFile(filePath);
+            Console.WriteLine($"SettingsManager: Loaded calibration profile '{profile?.Name}' from {filePath}");
+            return profile;
+        }
+
+        /// <summary>
+        /// Lists all available calibration profiles.
+        /// </summary>
+        public List<DisplayCalibrationProfile> ListCalibrationProfiles()
+        {
+            var profiles = new List<DisplayCalibrationProfile>();
+
+            if (!Directory.Exists(CalibrationProfilesPath))
+                return profiles;
+
+            foreach (var file in Directory.GetFiles(CalibrationProfilesPath, "*.json"))
+            {
+                try
+                {
+                    var profile = DisplayCalibrationProfile.LoadFromFile(file);
+                    if (profile != null)
+                        profiles.Add(profile);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"SettingsManager: Failed to load profile from {file}: {ex.Message}");
+                }
+            }
+
+            return profiles.OrderByDescending(p => p.CalibratedAt).ToList();
+        }
+
+        /// <summary>
+        /// Lists calibration profiles for a specific monitor.
+        /// </summary>
+        public List<DisplayCalibrationProfile> ListCalibrationProfilesForMonitor(string monitorDevicePath)
+        {
+            return ListCalibrationProfiles()
+                .Where(p => p.MonitorDevicePath == monitorDevicePath)
+                .ToList();
+        }
+
+        /// <summary>
+        /// Deletes a calibration profile by ID.
+        /// </summary>
+        public bool DeleteCalibrationProfile(string profileId)
+        {
+            if (string.IsNullOrEmpty(profileId)) return false;
+
+            string filePath = Path.Combine(CalibrationProfilesPath, $"{profileId}.json");
+            if (!File.Exists(filePath))
+                return false;
+
+            try
+            {
+                File.Delete(filePath);
+                Console.WriteLine($"SettingsManager: Deleted calibration profile: {filePath}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"SettingsManager: Failed to delete profile {profileId}: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Gets the active calibration profile for a monitor, if any.
+        /// </summary>
+        public DisplayCalibrationProfile? GetActiveCalibrationProfile(string monitorDevicePath)
+        {
+            var monitorProfile = GetMonitorProfile(monitorDevicePath);
+            if (monitorProfile?.CalibrationProfileId == null)
+                return null;
+
+            return LoadCalibrationProfile(monitorProfile.CalibrationProfileId);
+        }
+
+        /// <summary>
+        /// Sets the active calibration profile for a monitor.
+        /// </summary>
+        public void SetActiveCalibrationProfile(string monitorDevicePath, string? profileId)
+        {
+            var monitorProfile = GetMonitorProfile(monitorDevicePath);
+            if (monitorProfile == null)
+            {
+                monitorProfile = new MonitorProfileData();
+            }
+
+            monitorProfile.CalibrationProfileId = profileId;
+            SetMonitorProfile(monitorDevicePath, monitorProfile);
+            Console.WriteLine($"SettingsManager: Set active calibration profile for {monitorDevicePath} to {profileId ?? "none"}");
+        }
+
+        #endregion
 
         /// <summary>
         /// Validates and clamps all settings to safe ranges to prevent malicious/corrupted values.

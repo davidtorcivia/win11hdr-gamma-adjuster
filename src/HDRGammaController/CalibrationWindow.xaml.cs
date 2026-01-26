@@ -10,6 +10,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using HDRGammaController.Core;
 using HDRGammaController.Core.Calibration;
 using static HDRGammaController.Core.Calibration.PatchSetGenerator;
 
@@ -71,8 +72,16 @@ namespace HDRGammaController
         private readonly CalibrationTarget? _calibrationTarget;
         private readonly CalibrationPreset _calibrationPreset;
 
+        // State management for bypassing corrections during calibration
+        private readonly CalibrationStateManager? _stateManager;
+        private readonly MonitorInfo? _targetMonitor;
+        private readonly GammaMode _previousGammaMode;
+        private readonly CalibrationSettings? _previousSettings;
+        private bool _bypassApplied;
+        private bool _completedSuccessfully;
+
         private bool _isFullScreenMode = true;
-        private int _patchSize = 250;
+        private int _patchSize = 600;
         private bool _isPaused;
         private bool _isCancelled;
         private bool _isCalibrationRunning;
@@ -90,7 +99,6 @@ namespace HDRGammaController
         private CalibrationMetrics? _calibrationMetrics;
 
         // Window state for mode switching
-        private WindowStyle _previousWindowStyle;
         private ResizeMode _previousResizeMode;
         private double _previousLeft, _previousTop, _previousWidth, _previousHeight;
         private bool _wasMaximized;
@@ -135,6 +143,31 @@ namespace HDRGammaController
             EstimatedTimeText.Text = FormatEstimatedTime(_totalPatches);
         }
 
+        /// <summary>
+        /// Creates a calibration window with state management for bypassing corrections.
+        /// </summary>
+        public CalibrationWindow(
+            ColorimeterService colorimeterService,
+            CalibrationTarget target,
+            CalibrationPreset preset,
+            CalibrationStateManager stateManager,
+            MonitorInfo targetMonitor,
+            GammaMode previousGammaMode,
+            CalibrationSettings? previousSettings)
+            : this(colorimeterService, target, preset)
+        {
+            _stateManager = stateManager;
+            _targetMonitor = targetMonitor;
+            _previousGammaMode = previousGammaMode;
+            _previousSettings = previousSettings;
+
+            // Show bypass warning in the setup panel
+            if (_previousGammaMode != GammaMode.WindowsDefault || previousSettings?.HasAdjustments == true)
+            {
+                BypassWarningPanel.Visibility = Visibility.Visible;
+            }
+        }
+
         #endregion
 
         #region Window Event Handlers
@@ -172,6 +205,21 @@ namespace HDRGammaController
 
                 _isCancelled = true;
                 _cancellationTokenSource?.Cancel();
+            }
+
+            // If bypass was applied and we're closing without successful completion,
+            // restore the previous correction state
+            if (_bypassApplied && _stateManager != null && !_completedSuccessfully)
+            {
+                try
+                {
+                    _stateManager.RestorePreviousState();
+                    Console.WriteLine("CalibrationWindow: Restored previous correction state on close");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"CalibrationWindow: Failed to restore state: {ex.Message}");
+                }
             }
 
             // Stop blocking screen saver
@@ -240,12 +288,21 @@ namespace HDRGammaController
 
         private void DisplayMode_Changed(object sender, RoutedEventArgs e)
         {
+            // Guard against being called during XAML initialization before controls are created
+            if (FullScreenModeRadio == null || WindowedWarning == null)
+                return;
+
             _isFullScreenMode = FullScreenModeRadio.IsChecked == true;
             WindowedWarning.Visibility = _isFullScreenMode ? Visibility.Collapsed : Visibility.Visible;
         }
 
+        // CalibrationMode_Changed removed - calibration mode is now selected in CalibrationSetupWindow
+
         private void ApplyDisplayMode()
         {
+            // Note: Window has AllowsTransparency=True, so WindowStyle must remain None
+            // We keep the chromeless look and just change size/position
+
             if (_isFullScreenMode)
             {
                 // Store current window state
@@ -253,12 +310,10 @@ namespace HDRGammaController
                 _previousTop = Top;
                 _previousWidth = Width;
                 _previousHeight = Height;
-                _previousWindowStyle = WindowStyle;
                 _previousResizeMode = ResizeMode;
                 _wasMaximized = WindowState == WindowState.Maximized;
 
-                // Go full screen
-                WindowStyle = WindowStyle.None;
+                // Go full screen - keep WindowStyle.None (required for AllowsTransparency)
                 ResizeMode = ResizeMode.NoResize;
                 WindowState = WindowState.Normal;
 
@@ -290,9 +345,8 @@ namespace HDRGammaController
             }
             else
             {
-                // Windowed mode
-                WindowStyle = WindowStyle.SingleBorderWindow;
-                ResizeMode = ResizeMode.CanResize;
+                // Windowed mode - keep chromeless style but allow resizing
+                ResizeMode = ResizeMode.CanResizeWithGrip;
 
                 // Set reasonable window size for windowed mode
                 Width = 600;
@@ -318,7 +372,7 @@ namespace HDRGammaController
             }
             else
             {
-                WindowStyle = _previousWindowStyle;
+                // Don't restore WindowStyle - must stay None for AllowsTransparency
                 ResizeMode = _previousResizeMode;
                 Left = _previousLeft;
                 Top = _previousTop;
@@ -330,13 +384,7 @@ namespace HDRGammaController
 
         private void UpdatePatchSize()
         {
-            if (SmallPatchRadio.IsChecked == true)
-                _patchSize = 150;
-            else if (MediumPatchRadio.IsChecked == true)
-                _patchSize = 250;
-            else if (LargePatchRadio.IsChecked == true)
-                _patchSize = 350;
-
+            // Default patch size is 600x600 - user can resize window to scale the patch
             ColorPatchBorder.Width = _patchSize;
             ColorPatchBorder.Height = _patchSize;
         }
@@ -420,7 +468,7 @@ namespace HDRGammaController
 
         #region Calibration Control
 
-        private async void Start_Click(object sender, RoutedEventArgs e)
+        private void Start_Click(object sender, RoutedEventArgs e)
         {
             if (_colorimeterService == null || _calibrationTarget == null)
             {
@@ -429,11 +477,69 @@ namespace HDRGammaController
                 return;
             }
 
-            // Apply display mode
+            // Apply display mode (full-screen or windowed)
             ApplyDisplayMode();
 
-            // Show measurement panel
+            // Update positioning patch size based on selected patch size
+            UpdatePositioningPatchSize();
+
+            // Show windowed mode banner if applicable
+            if (!_isFullScreenMode)
+            {
+                PositioningWindowedBanner.Visibility = Visibility.Visible;
+            }
+
+            // Show positioning panel for user to place colorimeter
             SetupPanel.Visibility = Visibility.Collapsed;
+            PositioningPanel.Visibility = Visibility.Visible;
+        }
+
+        private void UpdatePositioningPatchSize()
+        {
+            // Set positioning patch size - user can resize window to scale it
+            PositioningPatchBorder.Width = _patchSize;
+            PositioningPatchBorder.Height = _patchSize;
+        }
+
+        private void PositioningBack_Click(object sender, RoutedEventArgs e)
+        {
+            // Go back to setup panel
+            PositioningPanel.Visibility = Visibility.Collapsed;
+            PositioningWindowedBanner.Visibility = Visibility.Collapsed;
+            SetupPanel.Visibility = Visibility.Visible;
+
+            // Restore to original setup window size (as defined in XAML: 700x700)
+            ResizeMode = ResizeMode.CanResizeWithGrip;
+            Width = 700;
+            Height = 700;
+            Topmost = false;
+
+            // Center on screen
+            Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
+            Top = (SystemParameters.PrimaryScreenHeight - Height) / 2;
+        }
+
+        private async void BeginMeasurement_Click(object sender, RoutedEventArgs e)
+        {
+            // Enter bypass mode - disable all color corrections for accurate measurement
+            if (_stateManager != null && _targetMonitor != null && !_bypassApplied)
+            {
+                try
+                {
+                    _stateManager.EnterBypassMode(_targetMonitor, _previousGammaMode, _previousSettings);
+                    _bypassApplied = true;
+                    Console.WriteLine("CalibrationWindow: Entered bypass mode - all corrections disabled");
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Failed to disable color corrections: {ex.Message}\n\nCalibration may be inaccurate.",
+                        "Warning", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            }
+
+            // Hide positioning, show measurement panel
+            PositioningPanel.Visibility = Visibility.Collapsed;
+            PositioningWindowedBanner.Visibility = Visibility.Collapsed;
             MeasurementPanel.Visibility = Visibility.Visible;
 
             // Create the calibration orchestrator
@@ -551,8 +657,26 @@ namespace HDRGammaController
                 });
                 CalibrationCancelled?.Invoke(this, EventArgs.Empty);
             }
+            catch (UsbDriverException)
+            {
+                // USB driver error - offer to install drivers automatically
+                Dispatcher.Invoke(() =>
+                {
+                    ShowDriverInstallDialog();
+                });
+            }
             catch (Exception ex)
             {
+                // Check if this is a wrapped driver exception
+                if (ex.InnerException is UsbDriverException || UsbDriverHelper.IsDriverError(ex.Message))
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        ShowDriverInstallDialog();
+                    });
+                    return;
+                }
+
                 Dispatcher.Invoke(() =>
                 {
                     ShowCompletion(false, $"Calibration failed: {ex.Message}");
@@ -734,6 +858,35 @@ namespace HDRGammaController
             Close();
         }
 
+        private void TitleBar_MouseDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton == MouseButton.Left)
+            {
+                DragMove();
+            }
+        }
+
+        private void PositioningPatch_MouseDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton == MouseButton.Left)
+            {
+                DragMove();
+            }
+        }
+
+        private void PositioningPanel_MouseDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton == MouseButton.Left)
+            {
+                DragMove();
+            }
+        }
+
+        private void Minimize_Click(object sender, RoutedEventArgs e)
+        {
+            WindowState = WindowState.Minimized;
+        }
+
         private void ViewReport_Click(object sender, RoutedEventArgs e)
         {
             if (_calibrationResult?.Success != true || _calibrationTarget == null)
@@ -835,10 +988,19 @@ namespace HDRGammaController
 
             if (success)
             {
+                _completedSuccessfully = true;
                 CompletionIcon.Text = "✓";
                 CompletionIcon.Foreground = FindResource("SuccessBrush") as SolidColorBrush;
                 CompletionTitle.Text = "Calibration Complete";
                 ViewReportButton.Visibility = Visibility.Visible;
+
+                // Show display mode options if bypass was applied
+                if (_bypassApplied && _stateManager != null)
+                {
+                    DisplayModeOptionsPanel.Visibility = Visibility.Visible;
+                    // Default to calibration only view
+                    ViewCalibrationOnlyRadio.IsChecked = true;
+                }
             }
             else
             {
@@ -846,9 +1008,50 @@ namespace HDRGammaController
                 CompletionIcon.Foreground = FindResource("ErrorBrush") as SolidColorBrush;
                 CompletionTitle.Text = "Calibration Failed";
                 ViewReportButton.Visibility = Visibility.Collapsed;
+                DisplayModeOptionsPanel.Visibility = Visibility.Collapsed;
+
+                // Restore previous settings on failure
+                if (_bypassApplied && _stateManager != null)
+                {
+                    try
+                    {
+                        _stateManager.RestorePreviousState();
+                        Console.WriteLine("CalibrationWindow: Restored previous state after failure");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"CalibrationWindow: Failed to restore state: {ex.Message}");
+                    }
+                }
             }
 
             CompletionMessage.Text = message;
+        }
+
+        private void DisplayModeOption_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_stateManager == null || _targetMonitor == null || !_bypassApplied)
+                return;
+
+            try
+            {
+                if (ViewCalibrationOnlyRadio.IsChecked == true)
+                {
+                    // Apply calibration LUT only (no additional corrections)
+                    _stateManager.ApplyCalibrationOnly(_targetMonitor, _generatedLut);
+                    Console.WriteLine("CalibrationWindow: Switched to calibration-only view");
+                }
+                else if (ViewWithPreviousSettingsRadio.IsChecked == true)
+                {
+                    // Apply calibration with previous gamma/night mode settings
+                    _stateManager.ApplyCalibrationWithPreviousSettings(_targetMonitor, _generatedLut);
+                    Console.WriteLine("CalibrationWindow: Switched to calibration + previous settings view");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"CalibrationWindow: Failed to change display mode: {ex.Message}");
+            }
         }
 
         #endregion
@@ -890,6 +1093,63 @@ namespace HDRGammaController
                 return $"Blue {(int)(rgb.B * 100)}%";
 
             return $"RGB({(int)(rgb.R * 255)},{(int)(rgb.G * 255)},{(int)(rgb.B * 255)})";
+        }
+
+        /// <summary>
+        /// Shows the driver installation dialog and offers to retry calibration.
+        /// </summary>
+        private void ShowDriverInstallDialog()
+        {
+            // First restore the previous state since calibration failed
+            try
+            {
+                if (_stateManager != null && _bypassApplied)
+                {
+                    _stateManager.RestorePreviousState();
+                    _bypassApplied = false;
+                    Console.WriteLine("CalibrationWindow: Restored previous state before driver dialog");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"CalibrationWindow: Failed to restore state: {ex.Message}");
+            }
+
+            // Show the driver installation dialog
+            var dialog = new DriverInstallDialog
+            {
+                Owner = this
+            };
+
+            var result = dialog.ShowDialog();
+
+            if (dialog.ShouldRetry && dialog.DriverInstalled)
+            {
+                // User wants to retry - restart calibration
+                Console.WriteLine("CalibrationWindow: User requested retry after driver installation");
+
+                // Reset UI state
+                MeasurementPanel.Visibility = Visibility.Visible;
+                CompletionOverlay.Visibility = Visibility.Collapsed;
+                _isCancelled = false;
+                _isPaused = false;
+
+                // Restart calibration by going back to positioning
+                PositioningPanel.Visibility = Visibility.Visible;
+                MeasurementPanel.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                // User doesn't want to retry - show failure message
+                ShowCompletion(false, "USB driver installation required.\n\nInstall the ArgyllCMS USB drivers and try again.");
+
+                if (SoundNotificationsCheck.IsChecked == true)
+                {
+                    SystemSounds.Hand.Play();
+                }
+
+                CalibrationCompleted?.Invoke(this, new CalibrationCompleteEventArgs(false, "USB driver error"));
+            }
         }
 
         #endregion

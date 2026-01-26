@@ -363,16 +363,24 @@ namespace HDRGammaController.Core.Calibration
 
         #region Utilities
 
-        private static ColorPatch CreatePatch(string name, LinearRgb rgb, PatchCategory category,
+        private static ColorPatch CreatePatch(string name, LinearRgb signalRgb, PatchCategory category,
             int index, bool isCritical, CalibrationTarget target)
         {
             // Calculate target XYZ for this patch
-            var targetXyz = target.LinearRgbToXyz(rgb);
+            // IMPORTANT: signalRgb contains the gamma-encoded signal values (0-1) that will be sent to the display.
+            // To compute the target XYZ (what the color SHOULD look like), we must:
+            // 1. Apply the target's EOTF to decode signal to linear light
+            // 2. Convert linear RGB to XYZ using the target's color matrix
+            double linearR = target.ApplyEotf(signalRgb.R);
+            double linearG = target.ApplyEotf(signalRgb.G);
+            double linearB = target.ApplyEotf(signalRgb.B);
+            var linearRgb = new LinearRgb(linearR, linearG, linearB);
+            var targetXyz = target.LinearRgbToXyz(linearRgb);
 
             return new ColorPatch
             {
                 Name = name,
-                DisplayRgb = rgb,
+                DisplayRgb = signalRgb,
                 Category = category,
                 Index = index,
                 IsCritical = isCritical,

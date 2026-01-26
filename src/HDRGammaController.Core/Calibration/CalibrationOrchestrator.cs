@@ -256,6 +256,12 @@ namespace HDRGammaController.Core.Calibration
                 CalibrationCompleted?.Invoke(this, new CalibrationResultEventArgs(result));
                 return result;
             }
+            catch (UsbDriverException)
+            {
+                // USB driver errors need user action - rethrow so UI can handle
+                SetState(CalibrationState.Failed);
+                throw;
+            }
             catch (Exception ex)
             {
                 SetState(CalibrationState.Failed);
@@ -345,6 +351,7 @@ namespace HDRGammaController.Core.Calibration
 
                 // Take measurement with retry
                 MeasurementResult? measurement = null;
+                string? lastError = null;
                 while (_retryCount < _maxRetries)
                 {
                     try
@@ -354,20 +361,31 @@ namespace HDRGammaController.Core.Calibration
                         if (measurement.IsValid)
                             break;
 
+                        lastError = measurement.ErrorMessage ?? "Unknown measurement error";
                         _retryCount++;
                         if (_retryCount < _maxRetries)
                         {
                             ErrorOccurred?.Invoke(this, new CalibrationErrorEventArgs(
-                                $"Measurement invalid: {measurement.ErrorMessage}. Retrying ({_retryCount}/{_maxRetries})...",
+                                $"Measurement invalid: {lastError}. Retrying ({_retryCount}/{_maxRetries})...",
                                 patch, false));
                             await Task.Delay(_settleTimeMs, cancellationToken); // Extra settle time on retry
                         }
                     }
+                    catch (UsbDriverException)
+                    {
+                        // Don't retry driver errors - they won't resolve without user action
+                        // Rethrow immediately so UI can offer driver installation
+                        throw;
+                    }
                     catch (Exception ex)
                     {
+                        lastError = ex.Message;
                         _retryCount++;
                         if (_retryCount >= _maxRetries)
-                            throw;
+                        {
+                            throw new InvalidOperationException(
+                                $"Failed to measure patch {patch.Name} after {_maxRetries} attempts. Last error: {lastError}", ex);
+                        }
 
                         ErrorOccurred?.Invoke(this, new CalibrationErrorEventArgs(
                             $"Measurement error: {ex.Message}. Retrying ({_retryCount}/{_maxRetries})...",
@@ -379,7 +397,8 @@ namespace HDRGammaController.Core.Calibration
                 if (measurement == null || !measurement.IsValid)
                 {
                     throw new InvalidOperationException(
-                        $"Failed to get valid measurement for patch {patch.Name} after {_maxRetries} attempts");
+                        $"Failed to get valid measurement for patch {patch.Name} after {_maxRetries} attempts. " +
+                        $"Last error: {lastError ?? "No error details available"}");
                 }
 
                 // Store measurement
@@ -393,17 +412,33 @@ namespace HDRGammaController.Core.Calibration
 
         /// <summary>
         /// Sets state with automatic locking. Use from methods that don't already hold _stateLock.
+        /// Events are raised AFTER releasing the lock to prevent potential deadlocks.
         /// </summary>
         private void SetState(CalibrationState newState)
         {
+            CalibrationState? oldState = null;
+
             lock (_stateLock)
             {
-                SetStateLocked(newState);
+                if (_state != newState)
+                {
+                    oldState = _state;
+                    _state = newState;
+                }
+            }
+
+            // Raise event outside of lock to prevent deadlocks
+            if (oldState.HasValue)
+            {
+                StateChanged?.Invoke(this, new CalibrationStateEventArgs(oldState.Value, newState));
             }
         }
 
         /// <summary>
         /// Sets state without locking. Caller MUST hold _stateLock.
+        /// WARNING: This method raises events while potentially under lock.
+        /// Only use when you need atomic state changes (e.g., Pause/Resume/Cancel).
+        /// Event handlers must be lightweight and must not call back into the orchestrator.
         /// </summary>
         private void SetStateLocked(CalibrationState newState)
         {
@@ -411,7 +446,8 @@ namespace HDRGammaController.Core.Calibration
             {
                 var oldState = _state;
                 _state = newState;
-                // Note: Event raised while holding lock - keep handlers lightweight
+                // Note: Event raised while holding lock - handlers must be lightweight
+                // and must NOT call back into this orchestrator to avoid deadlocks
                 StateChanged?.Invoke(this, new CalibrationStateEventArgs(oldState, newState));
             }
         }

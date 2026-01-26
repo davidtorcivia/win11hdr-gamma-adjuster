@@ -1,0 +1,298 @@
+using System;
+using System.IO;
+using System.IO.Compression;
+using System.Net.Http;
+using System.Security.Cryptography;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace HDRGammaController.Core.Calibration
+{
+    /// <summary>
+    /// Utility class for downloading and managing ArgyllCMS binaries.
+    /// Provides shared download functionality for both dispwin (gamma) and spotread (calibration).
+    /// </summary>
+    public static class ArgyllDownloader
+    {
+        /// <summary>
+        /// URL for ArgyllCMS Windows binaries.
+        /// </summary>
+        public const string ArgyllDownloadUrl = "https://www.argyllcms.com/Argyll_V3.3.0_win64_exe.zip";
+
+        /// <summary>
+        /// Current ArgyllCMS version being downloaded.
+        /// </summary>
+        public const string ArgyllVersion = "Argyll_V3.3.0";
+
+        /// <summary>
+        /// SHA256 checksum for integrity verification (update when ArgyllCMS version changes).
+        /// Empty = skip verification.
+        /// </summary>
+        public const string ArgyllExpectedSha256 = ""; // Set to actual hash when known
+
+        /// <summary>
+        /// Minimum required version string (used for version comparison).
+        /// </summary>
+        public const string MinimumVersion = "3.0.0";
+
+        /// <summary>
+        /// Gets the local directory where ArgyllCMS is installed.
+        /// </summary>
+        public static string LocalArgyllDir => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "HDRGammaController", "Argyll");
+
+        /// <summary>
+        /// Gets the bin directory path.
+        /// </summary>
+        public static string LocalArgyllBinDir => Path.Combine(LocalArgyllDir, "bin");
+
+        /// <summary>
+        /// Event raised to report download progress.
+        /// </summary>
+        public static event EventHandler<DownloadProgressEventArgs>? ProgressChanged;
+
+        /// <summary>
+        /// Checks if ArgyllCMS is already installed locally with the required binaries.
+        /// </summary>
+        /// <returns>True if spotread.exe and dispwin.exe are available.</returns>
+        public static bool IsInstalled()
+        {
+            string binDir = LocalArgyllBinDir;
+            if (!Directory.Exists(binDir))
+                return false;
+
+            return File.Exists(Path.Combine(binDir, "spotread.exe")) &&
+                   File.Exists(Path.Combine(binDir, "dispwin.exe"));
+        }
+
+        /// <summary>
+        /// Gets the version of the installed ArgyllCMS, or null if not installed.
+        /// </summary>
+        public static string? GetInstalledVersion()
+        {
+            // Check for version marker file
+            string versionFile = Path.Combine(LocalArgyllDir, "version.txt");
+            if (File.Exists(versionFile))
+            {
+                try
+                {
+                    return File.ReadAllText(versionFile).Trim();
+                }
+                catch
+                {
+                    // Fall through
+                }
+            }
+
+            // If installed but no version file, assume old version
+            if (IsInstalled())
+                return "unknown";
+
+            return null;
+        }
+
+        /// <summary>
+        /// Checks if an update is needed (newer version available than installed).
+        /// </summary>
+        public static bool IsUpdateNeeded()
+        {
+            if (!IsInstalled())
+                return true;
+
+            string? installed = GetInstalledVersion();
+            if (installed == null || installed == "unknown")
+                return true;
+
+            // Compare versions (simple string comparison works for "V3.x.y" format)
+            return string.Compare(ArgyllVersion, installed, StringComparison.OrdinalIgnoreCase) > 0;
+        }
+
+        /// <summary>
+        /// Downloads and extracts ArgyllCMS binaries to LocalApplicationData.
+        /// </summary>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <param name="progress">Optional progress reporter (0-100).</param>
+        /// <returns>True if download and extraction succeeded.</returns>
+        public static async Task<bool> DownloadAsync(
+            CancellationToken cancellationToken = default,
+            IProgress<int>? progress = null)
+        {
+            string? tempDir = null;
+            try
+            {
+                ReportProgress("Starting download...", 0);
+
+                // Create temp directory with unique name
+                tempDir = Path.Combine(Path.GetTempPath(), $"HDRGammaController_ArgyllDownload_{Guid.NewGuid():N}");
+                Directory.CreateDirectory(tempDir);
+                string zipPath = Path.Combine(tempDir, "argyll.zip");
+
+                // Download with progress
+                ReportProgress($"Downloading from {ArgyllDownloadUrl}...", 5);
+                progress?.Report(5);
+
+                using (var client = new HttpClient())
+                {
+                    client.Timeout = TimeSpan.FromMinutes(10);
+
+                    // Set browser-like headers to avoid 418 "reauthentication required" error
+                    client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+                    client.DefaultRequestHeaders.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
+                    client.DefaultRequestHeaders.Add("Accept-Language", "en-US,en;q=0.5");
+
+                    using var response = await client.GetAsync(ArgyllDownloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                    response.EnsureSuccessStatusCode();
+
+                    var totalBytes = response.Content.Headers.ContentLength ?? -1;
+                    var downloadedBytes = 0L;
+
+                    using var contentStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                    using var fileStream = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true);
+
+                    var buffer = new byte[8192];
+                    int bytesRead;
+
+                    while ((bytesRead = await contentStream.ReadAsync(buffer, cancellationToken)) > 0)
+                    {
+                        await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+                        downloadedBytes += bytesRead;
+
+                        if (totalBytes > 0)
+                        {
+                            // Download is 5-70% of progress
+                            int downloadProgress = (int)(5 + (downloadedBytes * 65 / totalBytes));
+                            progress?.Report(downloadProgress);
+                            ReportProgress($"Downloading... {downloadedBytes / 1024 / 1024}MB / {totalBytes / 1024 / 1024}MB", downloadProgress);
+                        }
+                    }
+                }
+
+                ReportProgress("Download complete, verifying...", 70);
+                progress?.Report(70);
+
+                // Verify checksum if configured
+                if (!string.IsNullOrEmpty(ArgyllExpectedSha256))
+                {
+                    string actualHash = ComputeSha256(zipPath);
+                    if (!actualHash.Equals(ArgyllExpectedSha256, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidOperationException(
+                            $"Downloaded file failed integrity check.\nExpected SHA256: {ArgyllExpectedSha256}\nActual SHA256: {actualHash}");
+                    }
+                    ReportProgress("Checksum verified", 75);
+                }
+
+                // Extract
+                ReportProgress("Extracting files...", 80);
+                progress?.Report(80);
+
+                // Remove old installation if present
+                if (Directory.Exists(LocalArgyllDir))
+                {
+                    Directory.Delete(LocalArgyllDir, recursive: true);
+                }
+                Directory.CreateDirectory(LocalArgyllDir);
+
+                // The ZIP contains Argyll_V3.3.0/bin/dispwin.exe etc.
+                // We strip the version prefix and extract to LocalArgyllDir
+                using (var archive = ZipFile.OpenRead(zipPath))
+                {
+                    int totalEntries = archive.Entries.Count;
+                    int extracted = 0;
+
+                    foreach (var entry in archive.Entries)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+
+                        // Strip the first directory component (Argyll_V3.3.0/)
+                        string entryPath = entry.FullName;
+                        if (entryPath.StartsWith(ArgyllVersion + "/") || entryPath.StartsWith(ArgyllVersion + "\\"))
+                        {
+                            entryPath = entryPath.Substring(ArgyllVersion.Length + 1);
+                        }
+
+                        if (string.IsNullOrEmpty(entryPath)) continue;
+
+                        string destPath = Path.Combine(LocalArgyllDir, entryPath);
+
+                        if (entry.FullName.EndsWith("/") || entry.FullName.EndsWith("\\"))
+                        {
+                            // Directory
+                            Directory.CreateDirectory(destPath);
+                        }
+                        else
+                        {
+                            // File
+                            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+                            entry.ExtractToFile(destPath, overwrite: true);
+                        }
+
+                        extracted++;
+                        // Extraction is 80-95% of progress
+                        int extractProgress = 80 + (extracted * 15 / totalEntries);
+                        progress?.Report(extractProgress);
+                    }
+                }
+
+                // Write version marker
+                File.WriteAllText(Path.Combine(LocalArgyllDir, "version.txt"), ArgyllVersion);
+
+                ReportProgress("Installation complete!", 100);
+                progress?.Report(100);
+
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                ReportProgress("Download cancelled", 0);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                ReportProgress($"Download failed: {ex.Message}", 0);
+                throw;
+            }
+            finally
+            {
+                // Cleanup temp directory
+                if (tempDir != null && Directory.Exists(tempDir))
+                {
+                    try { Directory.Delete(tempDir, true); }
+                    catch { /* Ignore cleanup errors */ }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Computes SHA256 hash of a file.
+        /// </summary>
+        private static string ComputeSha256(string filePath)
+        {
+            using var sha256 = SHA256.Create();
+            using var stream = File.OpenRead(filePath);
+            byte[] hash = sha256.ComputeHash(stream);
+            return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+        }
+
+        private static void ReportProgress(string message, int percent)
+        {
+            ProgressChanged?.Invoke(null, new DownloadProgressEventArgs(message, percent));
+        }
+    }
+
+    /// <summary>
+    /// Event args for download progress.
+    /// </summary>
+    public class DownloadProgressEventArgs : EventArgs
+    {
+        public string Message { get; }
+        public int PercentComplete { get; }
+
+        public DownloadProgressEventArgs(string message, int percentComplete)
+        {
+            Message = message;
+            PercentComplete = percentComplete;
+        }
+    }
+}

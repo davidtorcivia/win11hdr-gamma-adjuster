@@ -3,10 +3,14 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:HDRGammaController.ViewModels"
         Title="Display Calibration"
-        MinWidth="500" MinHeight="400"
+        Width="700" Height="700"
+        MinWidth="600" MinHeight="500"
         WindowStartupLocation="CenterScreen"
         Background="#1A1A1A"
         Foreground="White"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        ResizeMode="CanResizeWithGrip"
         Loaded="Window_Loaded"
         Closing="Window_Closing"
         KeyDown="Window_KeyDown">
@@ -133,6 +137,158 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- Dark Mode ComboBox Style -->
+        <Style x:Key="DarkComboBox" TargetType="ComboBox">
+            <Setter Property="Background" Value="{StaticResource CardBackground}"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="{StaticResource CardBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton x:Name="ToggleButton" Grid.Column="2" Focusable="false"
+                                          IsChecked="{Binding Path=IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          ClickMode="Press">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="Border" Background="{StaticResource CardBackground}"
+                                                BorderBrush="{StaticResource CardBorder}" BorderThickness="1"
+                                                CornerRadius="4">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition/>
+                                                    <ColumnDefinition Width="20"/>
+                                                </Grid.ColumnDefinitions>
+                                                <ContentPresenter Grid.Column="0"/>
+                                                <Path x:Name="Arrow" Grid.Column="1" Fill="White"
+                                                      HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                      Data="M 0 0 L 4 4 L 8 0 Z"/>
+                                            </Grid>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Border" Property="Background" Value="#3D3D3D"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <ContentPresenter x:Name="ContentSite" IsHitTestVisible="False"
+                                              Content="{TemplateBinding SelectionBoxItem}"
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                              ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                              Margin="10,8,25,8" VerticalAlignment="Center" HorizontalAlignment="Left"/>
+                            <Popup x:Name="Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True" Focusable="False" PopupAnimation="Slide">
+                                <Grid x:Name="DropDown" SnapsToDevicePixels="True"
+                                      MinWidth="{TemplateBinding ActualWidth}" MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                    <Border x:Name="DropDownBorder" Background="#2D2D2D"
+                                            BorderBrush="{StaticResource CardBorder}" BorderThickness="1" CornerRadius="4"/>
+                                    <ScrollViewer Margin="4,6,4,6" SnapsToDevicePixels="True">
+                                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Grid>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Dark Mode ComboBoxItem Style - Must use x:Key and apply via ItemContainerStyle for popups -->
+        <Style x:Key="DarkComboBoxItem" TargetType="ComboBoxItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Padding" Value="10,8"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="Border" Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}" CornerRadius="2">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="#444444"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Border" Property="Background" Value="{StaticResource AccentBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Dark Mode ScrollBar Style - MUST be defined before ScrollViewer that uses it -->
+        <Style x:Key="DarkScrollBar" TargetType="ScrollBar">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Width" Value="10"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Grid>
+                            <Border Background="#252525" CornerRadius="5"/>
+                            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                <Track.Thumb>
+                                    <Thumb>
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Border Background="#555555" CornerRadius="5" Margin="2"/>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="Orientation" Value="Horizontal">
+                    <Setter Property="Width" Value="Auto"/>
+                    <Setter Property="Height" Value="10"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Dark Mode ScrollViewer Style -->
+        <Style TargetType="ScrollViewer">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollViewer">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <ScrollContentPresenter Grid.Column="0" Grid.Row="0"/>
+                            <ScrollBar x:Name="PART_VerticalScrollBar" Grid.Column="1" Grid.Row="0"
+                                       Value="{TemplateBinding VerticalOffset}"
+                                       Maximum="{TemplateBinding ScrollableHeight}"
+                                       ViewportSize="{TemplateBinding ViewportHeight}"
+                                       Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}"
+                                       Style="{StaticResource DarkScrollBar}"/>
+                            <ScrollBar x:Name="PART_HorizontalScrollBar" Grid.Column="0" Grid.Row="1"
+                                       Orientation="Horizontal"
+                                       Value="{TemplateBinding HorizontalOffset}"
+                                       Maximum="{TemplateBinding ScrollableWidth}"
+                                       ViewportSize="{TemplateBinding ViewportWidth}"
+                                       Visibility="{TemplateBinding ComputedHorizontalScrollBarVisibility}"
+                                       Style="{StaticResource DarkScrollBar}"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid x:Name="RootGrid">
@@ -144,26 +300,35 @@
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <!-- Header -->
-            <Border Grid.Row="0" Background="#252525" Padding="20,16">
+            <!-- Titlebar -->
+            <Border Grid.Row="0" Background="#252525" MouseLeftButtonDown="TitleBar_MouseDown">
                 <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-                    <StackPanel>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="40"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <!-- Window chrome row -->
+                    <Grid Grid.Row="0" Margin="16,0">
+                        <TextBlock Text="Display Calibration" VerticalAlignment="Center" FontWeight="Medium" FontSize="14"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <Button Content="—" Style="{StaticResource SubtleButton}" Click="Minimize_Click"
+                                    Width="32" Height="28" Padding="0" FontSize="12"/>
+                            <Button Content="✕" Style="{StaticResource SubtleButton}" Click="Cancel_Click"
+                                    Width="32" Height="28" Padding="0" Margin="4,0,0,0"/>
+                        </StackPanel>
+                    </Grid>
+                    <!-- Header content row -->
+                    <StackPanel Grid.Row="1" Margin="20,8,20,16">
                         <TextBlock Text="Display Calibration Setup" FontSize="20" FontWeight="SemiBold"/>
                         <TextBlock Text="Configure measurement settings before starting calibration"
                                    Foreground="{StaticResource TextDim}" Margin="0,4,0,0"/>
                     </StackPanel>
-                    <Button Grid.Column="1" Content="X" Style="{StaticResource SubtleButton}"
-                            Click="Cancel_Click" ToolTip="Close" Width="32" Height="32" Padding="0"/>
                 </Grid>
             </Border>
 
             <!-- Setup Options -->
             <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="20">
-                <StackPanel MaxWidth="600">
+                <StackPanel MaxWidth="640">
                     <!-- Display Mode Selection -->
                     <TextBlock Text="Display Mode" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,8"/>
                     <RadioButton x:Name="FullScreenModeRadio" Style="{StaticResource ModernRadioButton}"
@@ -203,43 +368,6 @@
                         </Grid>
                     </Border>
 
-                    <!-- Patch Size Selection -->
-                    <TextBlock Text="Patch Size" FontSize="14" FontWeight="SemiBold" Margin="0,24,0,8"/>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <RadioButton x:Name="SmallPatchRadio" Style="{StaticResource ModernRadioButton}"
-                                     GroupName="PatchSize" Margin="0,0,4,0">
-                            <StackPanel HorizontalAlignment="Center">
-                                <Border Width="40" Height="40" Background="#0078D4" Margin="0,0,0,4"/>
-                                <TextBlock Text="Small" HorizontalAlignment="Center"/>
-                                <TextBlock Text="150x150 px" Foreground="{StaticResource TextDim}"
-                                           FontSize="11" HorizontalAlignment="Center"/>
-                            </StackPanel>
-                        </RadioButton>
-                        <RadioButton x:Name="MediumPatchRadio" Style="{StaticResource ModernRadioButton}"
-                                     GroupName="PatchSize" Grid.Column="1" Margin="4,0" IsChecked="True">
-                            <StackPanel HorizontalAlignment="Center">
-                                <Border Width="60" Height="60" Background="#0078D4" Margin="0,0,0,4"/>
-                                <TextBlock Text="Medium" HorizontalAlignment="Center"/>
-                                <TextBlock Text="250x250 px" Foreground="{StaticResource TextDim}"
-                                           FontSize="11" HorizontalAlignment="Center"/>
-                            </StackPanel>
-                        </RadioButton>
-                        <RadioButton x:Name="LargePatchRadio" Style="{StaticResource ModernRadioButton}"
-                                     GroupName="PatchSize" Grid.Column="2" Margin="4,0,0,0">
-                            <StackPanel HorizontalAlignment="Center">
-                                <Border Width="80" Height="80" Background="#0078D4" Margin="0,0,0,4"/>
-                                <TextBlock Text="Large" HorizontalAlignment="Center"/>
-                                <TextBlock Text="350x350 px" Foreground="{StaticResource TextDim}"
-                                           FontSize="11" HorizontalAlignment="Center"/>
-                            </StackPanel>
-                        </RadioButton>
-                    </Grid>
-
                     <!-- Colorimeter Status -->
                     <TextBlock Text="Colorimeter Status" FontSize="14" FontWeight="SemiBold" Margin="0,24,0,8"/>
                     <Border Background="{StaticResource CardBackground}" BorderBrush="{StaticResource CardBorder}"
@@ -258,6 +386,31 @@
                             </StackPanel>
                             <Button Grid.Column="2" Content="Refresh" Style="{StaticResource SubtleButton}"
                                     Click="RefreshColorimeter_Click" Padding="8,4"/>
+                        </Grid>
+                    </Border>
+
+                    <!-- Correction Bypass Warning -->
+                    <Border x:Name="BypassWarningPanel" Background="#1A3D2800"
+                            BorderBrush="{StaticResource WarningBrush}" BorderThickness="1"
+                            CornerRadius="4" Padding="12" Margin="0,24,0,0" Visibility="Collapsed">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="ℹ" FontSize="18" Foreground="{StaticResource AccentBrush}"
+                                       VerticalAlignment="Top" Margin="0,0,10,0"/>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock TextWrapping="Wrap" Foreground="White">
+                                    <Run FontWeight="SemiBold">Color corrections will be temporarily disabled</Run>
+                                </TextBlock>
+                                <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextDim}" Margin="0,4,0,0">
+                                    Your current gamma adjustments and night mode settings will be bypassed
+                                    during calibration to measure the display's native response.
+                                    After calibration, you can choose to view the results with or without
+                                    your previous settings applied.
+                                </TextBlock>
+                            </StackPanel>
                         </Grid>
                     </Border>
 
@@ -289,6 +442,54 @@
                             Style="{StaticResource ModernButton}" Click="Start_Click" IsEnabled="False"/>
                 </Grid>
             </Border>
+        </Grid>
+
+        <!-- Positioning Panel (shown after clicking Start, before measurement begins) -->
+        <Grid x:Name="PositioningPanel" Visibility="Collapsed" Background="{StaticResource DarkSurround}"
+              MouseLeftButtonDown="PositioningPanel_MouseDown" Cursor="SizeAll">
+            <!-- Windowed Mode Warning Banner -->
+            <Border x:Name="PositioningWindowedBanner" Background="{StaticResource WarningBackgroundBrush}"
+                    VerticalAlignment="Top" Padding="8,6" Visibility="Collapsed" Panel.ZIndex="100">
+                <TextBlock HorizontalAlignment="Center" Foreground="#FFD699" FontSize="12">
+                    <Run FontWeight="SemiBold">Windowed Mode</Run>
+                    <Run> - Drag anywhere to position, resize window to scale patch</Run>
+                </TextBlock>
+            </Border>
+
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Preview Patch Display - Scales with window size -->
+                <Viewbox Grid.Row="0" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"
+                         Margin="20">
+                    <Border x:Name="PositioningPatchBorder" Width="400" Height="400"
+                            Background="White" BorderThickness="0">
+                        <!-- White patch for positioning - scales with window -->
+                    </Border>
+                </Viewbox>
+
+                <!-- Positioning Instructions -->
+                <Border Grid.Row="1" Background="#CC1A1A1A" Padding="24,20">
+                    <StackPanel MaxWidth="600" HorizontalAlignment="Center">
+                        <TextBlock Text="Position Your Colorimeter" FontSize="18" FontWeight="SemiBold"
+                                   HorizontalAlignment="Center" Margin="0,0,0,12"/>
+                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextDim}" FontSize="13"
+                                   HorizontalAlignment="Center" TextAlignment="Center" Margin="0,0,0,16">
+                            Drag the white patch to position it under your colorimeter.
+                            When the patch is centered under your sensor, click Begin Measurement.
+                        </TextBlock>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <Button Content="Back" Style="{StaticResource SubtleButton}"
+                                    Click="PositioningBack_Click" Margin="0,0,12,0" Padding="20,10"/>
+                            <Button x:Name="BeginMeasurementButton" Content="Begin Measurement"
+                                    Style="{StaticResource ModernButton}" Click="BeginMeasurement_Click" Padding="24,10"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Grid>
         </Grid>
 
         <!-- Measurement Panel (shown during calibration) -->
@@ -395,13 +596,39 @@
 
             <!-- Completion Overlay -->
             <Grid x:Name="CompletionOverlay" Background="#CC1A1A1A" Visibility="Collapsed">
-                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="400">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="500">
                     <TextBlock x:Name="CompletionIcon" Text="✓" FontSize="64"
                                Foreground="{StaticResource SuccessBrush}" HorizontalAlignment="Center" Margin="0,0,0,16"/>
                     <TextBlock x:Name="CompletionTitle" Text="Calibration Complete"
                                FontSize="24" FontWeight="SemiBold" HorizontalAlignment="Center"/>
                     <TextBlock x:Name="CompletionMessage" Text="200 patches measured successfully"
                                Foreground="{StaticResource TextDim}" HorizontalAlignment="Center" Margin="0,8,0,0" TextWrapping="Wrap" TextAlignment="Center"/>
+
+                    <!-- Display Mode Options (only shown when bypass was applied) -->
+                    <Border x:Name="DisplayModeOptionsPanel" Background="{StaticResource CardBackground}"
+                            BorderBrush="{StaticResource CardBorder}" BorderThickness="1"
+                            CornerRadius="4" Padding="16" Margin="0,20,0,0" Visibility="Collapsed">
+                        <StackPanel>
+                            <TextBlock Text="Display Preview Mode" FontWeight="SemiBold" Margin="0,0,0,12"/>
+                            <RadioButton x:Name="ViewCalibrationOnlyRadio" Style="{StaticResource ModernRadioButton}"
+                                         GroupName="DisplayMode" IsChecked="True" Checked="DisplayModeOption_Changed">
+                                <StackPanel>
+                                    <TextBlock Text="Calibration Only" FontWeight="Medium"/>
+                                    <TextBlock Text="View display with only the new calibration LUT applied"
+                                               Foreground="{StaticResource TextDim}" FontSize="12" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton x:Name="ViewWithPreviousSettingsRadio" Style="{StaticResource ModernRadioButton}"
+                                         GroupName="DisplayMode" Checked="DisplayModeOption_Changed">
+                                <StackPanel>
+                                    <TextBlock Text="Calibration + Previous Settings" FontWeight="Medium"/>
+                                    <TextBlock Text="View with calibration, gamma adjustments, and night mode restored"
+                                               Foreground="{StaticResource TextDim}" FontSize="12" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </RadioButton>
+                        </StackPanel>
+                    </Border>
+
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,24,0,0">
                         <Button x:Name="ViewReportButton" Content="View Report" Style="{StaticResource ModernButton}"
                                 Click="ViewReport_Click" Margin="0,0,8,0"/>

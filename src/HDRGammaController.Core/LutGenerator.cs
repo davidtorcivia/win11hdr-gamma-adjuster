@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Linq;
+using HDRGammaController.Core.Calibration;
 
 namespace HDRGammaController.Core
 {
@@ -243,5 +244,175 @@ namespace HDRGammaController.Core
 
             return (lutR, lutG, lutB, lutGrey);
         }
+
+        #region Calibrated LUT Generation
+
+        /// <summary>
+        /// Generates per-channel 1D LUTs using measured display characteristics.
+        /// This provides accurate gamma compensation based on actual colorimeter measurements.
+        /// </summary>
+        /// <param name="targetGamma">The desired output gamma (2.2, 2.4, etc.).</param>
+        /// <param name="profile">The calibration profile with measured tone curves.</param>
+        /// <param name="calibration">Additional calibration settings (temperature, tint, etc.).</param>
+        /// <param name="sdrWhiteLevel">SDR white level in nits.</param>
+        /// <param name="isHdr">Whether the display is in HDR mode.</param>
+        /// <returns>Per-channel LUTs that compensate for the display's actual response.</returns>
+        public static (double[] R, double[] G, double[] B, double[] Grey) GenerateCalibratedLut(
+            double targetGamma,
+            DisplayCalibrationProfile profile,
+            CalibrationSettings calibration,
+            double sdrWhiteLevel,
+            bool isHdr = true)
+        {
+            // Convert profile to characterization
+            var characterization = profile.ToCharacterization();
+            return GenerateCalibratedLut(targetGamma, characterization, calibration, sdrWhiteLevel, isHdr);
+        }
+
+        /// <summary>
+        /// Generates per-channel 1D LUTs using measured display characteristics.
+        /// </summary>
+        public static (double[] R, double[] G, double[] B, double[] Grey) GenerateCalibratedLut(
+            double targetGamma,
+            DisplayCharacterization characterization,
+            CalibrationSettings calibration,
+            double sdrWhiteLevel,
+            bool isHdr = true)
+        {
+            double[] lutR = new double[1024];
+            double[] lutG = new double[1024];
+            double[] lutB = new double[1024];
+            double[] lutGrey = new double[1024];
+
+            // Get the measured tone curves (what the display actually does)
+            var measuredR = characterization.RedToneCurve ?? ToneCurve.CreateGamma(characterization.MeasuredGamma);
+            var measuredG = characterization.GreenToneCurve ?? ToneCurve.CreateGamma(characterization.MeasuredGamma);
+            var measuredB = characterization.BlueToneCurve ?? ToneCurve.CreateGamma(characterization.MeasuredGamma);
+
+            if (!isHdr)
+            {
+                // SDR Mode: Compute compensation curves
+                // For each input signal level, find what signal to send to get the target output
+                for (int i = 0; i < 1024; i++)
+                {
+                    double input = i / 1023.0;
+
+                    // What linear light level do we WANT for this input?
+                    // (Input represents the encoded signal, target gamma defines the desired decoding)
+                    double targetLinear = Math.Pow(input, targetGamma);
+
+                    // Apply calibration adjustments to the target
+                    var (adjR, adjG, adjB) = ColorAdjustments.ApplyCalibration(
+                        targetLinear, targetLinear, targetLinear, calibration);
+
+                    // What signal must we send to the display to get this output?
+                    // Use the INVERSE of the measured response
+                    lutR[i] = measuredR.InverseLookup(Math.Clamp(adjR, 0, 1));
+                    lutG[i] = measuredG.InverseLookup(Math.Clamp(adjG, 0, 1));
+                    lutB[i] = measuredB.InverseLookup(Math.Clamp(adjB, 0, 1));
+                    lutGrey[i] = (lutR[i] + lutG[i] + lutB[i]) / 3.0;
+                }
+                return (lutR, lutG, lutB, lutGrey);
+            }
+
+            // HDR Mode with calibration-aware compensation
+            double blackLevel = characterization.BlackLevel;
+
+            for (int i = 0; i < 1024; i++)
+            {
+                double normalized = i / 1023.0;
+
+                // 1. PQ EOTF -> linear nits
+                double linear = TransferFunctions.PqEotf(normalized);
+
+                double outputR, outputG, outputB;
+
+                if (Math.Abs(targetGamma - 1.0) < 0.01)
+                {
+                    // Linear mode (no gamma correction, just calibration)
+                    outputR = outputG = outputB = linear;
+                }
+                else
+                {
+                    // 2. Compute what linear output we want based on target gamma
+                    double srgbNormalized = TransferFunctions.SrgbInverseEotf(linear, sdrWhiteLevel, blackLevel);
+                    double gammaApplied = Math.Pow(srgbNormalized, targetGamma);
+                    double targetLinear = blackLevel + (sdrWhiteLevel - blackLevel) * gammaApplied;
+                    outputR = outputG = outputB = targetLinear;
+                }
+
+                // 3. Apply calibration adjustments
+                if (calibration.HasAdjustments)
+                {
+                    double normR = Math.Clamp(outputR / sdrWhiteLevel, 0, 1);
+                    double normG = Math.Clamp(outputG / sdrWhiteLevel, 0, 1);
+                    double normB = Math.Clamp(outputB / sdrWhiteLevel, 0, 1);
+
+                    var (adjR, adjG, adjB) = ColorAdjustments.ApplyCalibration(normR, normG, normB, calibration);
+
+                    outputR = adjR * sdrWhiteLevel;
+                    outputG = adjG * sdrWhiteLevel;
+                    outputB = adjB * sdrWhiteLevel;
+                }
+
+                // 4. Compensate for display's actual response
+                // Convert target linear to the signal level that produces it on THIS display
+                double targetNormR = Math.Clamp(outputR / sdrWhiteLevel, 0, 1);
+                double targetNormG = Math.Clamp(outputG / sdrWhiteLevel, 0, 1);
+                double targetNormB = Math.Clamp(outputB / sdrWhiteLevel, 0, 1);
+
+                double compensatedR = measuredR.InverseLookup(targetNormR) * sdrWhiteLevel;
+                double compensatedG = measuredG.InverseLookup(targetNormG) * sdrWhiteLevel;
+                double compensatedB = measuredB.InverseLookup(targetNormB) * sdrWhiteLevel;
+
+                // 5. Encode to PQ
+                double pqR = TransferFunctions.PqInverseEotf(compensatedR);
+                double pqG = TransferFunctions.PqInverseEotf(compensatedG);
+                double pqB = TransferFunctions.PqInverseEotf(compensatedB);
+                double pqGrey = TransferFunctions.PqInverseEotf((compensatedR + compensatedG + compensatedB) / 3.0);
+
+                // 6. HDR Headroom Preservation
+                if (linear <= sdrWhiteLevel)
+                {
+                    lutR[i] = pqR;
+                    lutG[i] = pqG;
+                    lutB[i] = pqB;
+                    lutGrey[i] = pqGrey;
+                }
+                else
+                {
+                    // Blend toward passthrough in HDR headroom
+                    double headroomRange = 10000.0 - sdrWhiteLevel;
+                    double headroomPosition = (linear - sdrWhiteLevel) / headroomRange;
+                    double blendFactor = Math.Min(1.0, headroomPosition);
+
+                    lutR[i] = pqR + (normalized - pqR) * blendFactor;
+                    lutG[i] = pqG + (normalized - pqG) * blendFactor;
+                    lutB[i] = pqB + (normalized - pqB) * blendFactor;
+                    lutGrey[i] = pqGrey + (normalized - pqGrey) * blendFactor;
+                }
+            }
+
+            return (lutR, lutG, lutB, lutGrey);
+        }
+
+        /// <summary>
+        /// Checks if a calibration profile is available and valid for the given gamma mode.
+        /// </summary>
+        public static bool CanUseCalibratedLut(DisplayCalibrationProfile? profile)
+        {
+            if (profile == null)
+                return false;
+
+            // Check if the profile has valid tone curve data
+            bool hasToneCurves = profile.RedToneCurve != null &&
+                                 profile.GreenToneCurve != null &&
+                                 profile.BlueToneCurve != null &&
+                                 profile.RedToneCurve.Length > 0;
+
+            return hasToneCurves || profile.MeasuredGamma > 0;
+        }
+
+        #endregion
     }
 }

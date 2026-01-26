@@ -117,8 +117,13 @@ namespace HDRGammaController.Core.Calibration
         public required string Name { get; init; }
 
         /// <summary>
-        /// The RGB values to display (signal values, 0.0-1.0, before any encoding).
-        /// These are the values sent to the display.
+        /// The RGB signal values to display (0.0-1.0 range, gamma-encoded).
+        /// These are the normalized signal values that would be sent to the display
+        /// (e.g., 0.5 represents 50% signal level, which after gamma decoding
+        /// produces approximately 21.8% linear light output with gamma 2.2).
+        /// Note: Although the type is LinearRgb, these values represent signal
+        /// levels rather than linear light - the EOTF must be applied to convert
+        /// to actual linear light values.
         /// </summary>
         public required LinearRgb DisplayRgb { get; init; }
 
