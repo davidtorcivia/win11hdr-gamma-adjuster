@@ -226,26 +226,40 @@ Blindly applying the gamma correction across the entire signal range would darke
 
 ### 5.2 The Shoulder Blend
 
-The correction therefore employs a **smooth blend** from the corrected curve to an identity passthrough as luminance increases above the SDR white level:
+The correction employs a smooth blend from the fully-corrected curve to a *dim-aware passthrough* as the signal rises above the SDR white level. Two details in that phrase are load-bearing and worth dwelling on, because a naïve implementation gets both of them subtly wrong.
+
+**Blend in PQ-signal space, not linear-nit space.** A blend parameterized by linear nits spends almost all of its range in a region the eye barely perceives — between 4,000 and 10,000 nits — while the region where content actually lives (200–2,000 nits) sees only a tiny fraction of the fade. The result is a curve that stays almost fully corrected across the entire useful HDR range and only lets go of the correction in the extreme peaks. PQ signal values are perceptually uniform by construction, so the blend is instead parameterized by the normalized PQ code value:
 
 $$
-\text{blend\_factor} = \min\left(1, \frac{L - W_{SDR}}{L_{max} - W_{SDR}}\right)
+t = \frac{N - N_{SDR}}{1 - N_{SDR}}, \quad t \in [0, 1]
 $$
 
-Where:
-- *L* = Linear luminance in nits
-- *W_{SDR}* = SDR white level
-- *L_{max}* = Maximum HDR luminance (10,000 nits for PQ)
+where *N* is the normalized PQ signal and *N*<sub>SDR</sub> is the PQ signal corresponding to the SDR white level. Stepping through *t* at uniform intervals traverses equal perceptual steps through the highlight range.
 
-The final output becomes:
+**Smoothstep for C¹ continuity.** A linear blend produces a LUT that is continuous in value but discontinuous in derivative at the SDR/HDR boundary, which shows up as a visible kink in smooth gradients (skies, radial gradients in UI). A smoothstep remedies this at no runtime cost:
 
 $$
-\text{output} = \text{corrected} + (\text{passthrough} - \text{corrected}) \times \text{blend\_factor}
+\text{blend\_factor} = t^{2}(3 - 2t)
 $$
 
-This produces a gradual transition: at exactly the SDR white level, the full correction is applied; as luminance increases, the correction fades toward unity; at 10,000 nits, the output equals the input unchanged.
+**The blend target must follow the brightness slider.** The correction we fade *from* is the fully-calibrated signal. The question is what we fade *to*. Fading to pure identity passthrough preserves the creative intent of HDR highlights — no re-gamma, no temperature tint on a 2,000-nit specular — which is the right behavior for almost every adjustment in the pipeline. But it is wrong for dimming: a user who slides brightness to 50% expects everything to come down, including specular highlights. Fading to identity leaves those highlights at full luminance and produces the counterintuitive effect of a dimmed UI with undimmed highlights punching through.
 
-The mathematical beauty of this approach is that it creates a smooth, monotonic LUT without discontinuities, while respecting the creative intent of both SDR (corrected) and HDR (preserved) content.
+The fix is to define the headroom target not as the unchanged input signal, but as the input signal after dimming only — preserving the HDR creative grade while still honoring the brightness setting:
+
+$$
+\text{headroom\_target}(L) =
+\operatorname{PQ}_{\mathrm{OETF}}\bigl(\text{dim}(L)\bigr)
+$$
+
+where the dimming function is the same power+scale defined in §6.4 but applied to absolute nits against the 10,000-nit PQ ceiling. When Brightness = 100%, this reduces exactly to PQ<sub>OETF</sub>(L) — the original identity passthrough — so the behavior is unchanged for users who never touch the dimming slider.
+
+The final output is:
+
+$$
+\text{output} = \text{corrected} + (\text{headroom\_target} - \text{corrected}) \times \text{blend\_factor}
+$$
+
+This produces a LUT that is smooth and monotonic across the full range, preserves creative intent in the HDR region, and responds correctly to the brightness control throughout.
 
 ---
 
@@ -304,42 +318,41 @@ Rather than specifying an absolute temperature, night mode operates via a **temp
 
 ### 6.3 Tint (Green/Magenta Axis)
 
-Color temperature adjustments move along the Planckian locus (blue ↔ orange axis). However, many displays and environments require adjustment along the **orthogonal** green/magenta axis—the tint control familiar from video color correction.
+Color temperature adjustments move along the Planckian locus (blue ↔ orange axis). However, many displays and environments require adjustment along the **orthogonal** green/magenta axis — the tint control familiar from video color correction.
 
-Tint adjustment is implemented as a differential scaling of the green channel relative to red and blue:
+Tint is implemented as a differential scaling of the green channel relative to red and blue. Let *τ* be the slider value in the range [−50, +50] and let *t = τ / 50* be the normalized value in [−1, +1].
 
-For tint value *τ* in range [-100, 100]:
+For *τ* > 0 (shift toward magenta):
 
 $$
-M_G = 1.0 + 0.002 \times |\tau|
-$$
-$$
-M_{RB} = 1.0 - 0.001 \times |\tau|
+M_R = 1 + 0.08\,t, \qquad M_G = 1 - 0.12\,t, \qquad M_B = 1 + 0.08\,t
 $$
 
-If *τ* > 0 (green tint): multiply G by *M_G*, multiply R and B by *M_{RB}*
+For *τ* < 0 (shift toward green), with *t' = −t ≥ 0*:
 
-If *τ* < 0 (magenta tint): multiply R and B by *M_G*, multiply G by *M_{RB}*
+$$
+M_R = 1 - 0.08\,t', \qquad M_G = 1 + 0.10\,t', \qquad M_B = 1 - 0.08\,t'
+$$
 
-This produces approximately ±20% green/magenta shift at the extremes while maintaining luminance.
+The asymmetric magenta coefficient (12%) compensates for the greater perceptual weight green carries in luminance; a symmetric multiplier would shift brightness noticeably when moving the slider.
 
 ### 6.4 Dimming
 
-Reducing display brightness proves less straightforward than multiplying all values by a scaling factor would suggest, for linear dimming—while mathematically obvious—crushes shadows before highlights are meaningfully reduced, violating the perceptual uniformity that a useful dimming function should preserve.
-
-Human brightness perception follows an approximate power law described by Stevens with exponent ~0.5 for luminance,[^9] and to maintain perceptual contrast across the tonal range while dimming, the controller employs **perceptual dimming**:
+Reducing display brightness proves less straightforward than multiplying all values by a single scalar. A pure linear dim preserves the ratio between shadow and highlight but is perceptually *less uniform* than we would like: at low brightness levels the eye's sensitivity to contrast in dark regions rises (Stevens' power law for luminance has an exponent near 0.5),[^9] so what feels like "dim the whole screen" actually collapses the visible shadow detail disproportionately. The controller compensates with a two-parameter curve that mirrors the "exposure + lift" interaction in photo editing:
 
 $$
-L_{dimmed} = L_{original}^{(1/k)}
+L_{\mathrm{dimmed}} = L^{1/\gamma(b)} \cdot b
 $$
 
-Where *k* derives from the brightness percentage:
+where *b* = brightness / 100 ∈ (0, 1] and γ grows as brightness falls:
 
 $$
-k = \left(\frac{\text{brightness}}{100}\right)^{0.5}
+\gamma(b) = 1 + 0.3\,(1 - b)
 $$
 
-This power-law compression reduces overall brightness while preserving shadow separation, instantiating the same principle that underlies exposure sliders in photo editing software.
+At *b* = 1.0 the function reduces to the identity (γ = 1, factor = 1). At *b* = 0.1 we have γ = 1.27, so a mid-gray input of 0.5 maps to 0.5<sup>0.787</sup>·0.1 ≈ 0.058 — brighter than the 0.05 a linear dim would produce, precisely because the γ term lifts shadows before the multiplicative factor brings everything down to the requested brightness. Near-black values are lifted more than near-white ones, preserving shadow separation even at very low brightness settings. White (L = 1) lands exactly at *b* so the user's "50%" slider maps to true 50% output.
+
+Users who prefer a straight linear dim — for calibration work or color-critical comparisons — can disable the shadow lift via the "Preserve shadow detail" toggle, falling back to *L<sub>dimmed</sub> = L · b*.
 
 ### 6.5 Order of Operations
 
@@ -473,4 +486,4 @@ Additional acknowledgements:
 
 ---
 
-*Last updated: January 2026*
+*Last updated: April 2026*

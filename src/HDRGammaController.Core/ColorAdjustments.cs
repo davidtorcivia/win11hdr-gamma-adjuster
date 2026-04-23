@@ -22,22 +22,54 @@ namespace HDRGammaController.Core
         {
             if (brightnessPercent >= 100.0) return value;
             if (brightnessPercent <= 0) return 0;
-            
+
             // Clamp to valid range (0-100)
             double brightness = Math.Clamp(brightnessPercent, 0.0, 100.0) / 100.0;
-            
+
             if (linear)
             {
                 return value * brightness;
             }
-            
-            // Power-law compression: raises shadow detail while compressing highlights
-            // This preserves near-black tones better than linear multiply
+
+            // Power-law compression: lifts shadow detail relative to a straight linear dim
+            // while still landing white at exactly `brightness`. At value=1 the output equals
+            // brightness; at value<1 the shadow lift preserves near-black separation.
             // Formula: output = input^(1/gamma_boost) * brightness
-            // where gamma_boost increases as brightness decreases
-            double gammaBoost = 1.0 + (1.0 - brightness) * 0.3; // 1.0 at 100%, 1.27 at 10%
-            
+            // where gamma_boost grows as brightness falls (1.0 at 100%, 1.27 at 10%).
+            double gammaBoost = 1.0 + (1.0 - brightness) * 0.3;
+
             return Math.Pow(value, 1.0 / gammaBoost) * brightness;
+        }
+
+        /// <summary>
+        /// Applies the same dimming curve to an absolute-nit value. Used by the HDR headroom
+        /// blend so highlights follow the brightness slider instead of snapping back to passthrough.
+        /// </summary>
+        /// <remarks>
+        /// The SDR path normalizes to [0,1] before dimming and rescales. For headroom we can't
+        /// assume a [0,1] range (highlights can be 10,000 nits), so we apply the same
+        /// power+scale in the nit domain normalized against the PQ ceiling. This keeps the
+        /// headroom curve monotonic and C⁰/C¹ continuous with the SDR portion at the boundary.
+        /// </remarks>
+        public static double ApplyDimmingNits(double nits, double brightnessPercent, bool linear = false)
+        {
+            if (brightnessPercent >= 100.0) return nits;
+            if (brightnessPercent <= 0) return 0;
+
+            double brightness = Math.Clamp(brightnessPercent, 0.0, 100.0) / 100.0;
+
+            if (linear)
+            {
+                return nits * brightness;
+            }
+
+            // Normalize against PQ ceiling to use the same shape function as ApplyDimming,
+            // then rescale. 10,000 nits is the PQ ceiling per SMPTE ST 2084.
+            const double PqCeiling = 10000.0;
+            double normalized = Math.Clamp(nits / PqCeiling, 0.0, 1.0);
+            double gammaBoost = 1.0 + (1.0 - brightness) * 0.3;
+            double dimmed = Math.Pow(normalized, 1.0 / gammaBoost) * brightness;
+            return dimmed * PqCeiling;
         }
         
         /// <summary>
@@ -168,9 +200,9 @@ namespace HDRGammaController.Core
 
             // Gamma Correct (Linear -> sRGB) using proper sRGB transfer function
             // IEC 61966-2-1:1999 specifies piecewise function, not simple 1/2.2 power
-            double r = LinearToSrgb(rL);
-            double g = LinearToSrgb(gL);
-            double b = LinearToSrgb(bL);
+            double r = TransferFunctions.SrgbOetf(rL);
+            double g = TransferFunctions.SrgbOetf(gL);
+            double b = TransferFunctions.SrgbOetf(bL);
 
             // Normalize to Max=1 to preserve brightness
             double max = Math.Max(r, Math.Max(g, b));
@@ -203,24 +235,6 @@ namespace HDRGammaController.Core
             double b = 1.0 - (factor * 0.9);
 
             return (r, g, b);
-        }
-
-        /// <summary>
-        /// Converts linear RGB value to sRGB using the proper IEC 61966-2-1:1999 transfer function.
-        /// Uses piecewise function with linear portion for small values.
-        /// </summary>
-        private static double LinearToSrgb(double linear)
-        {
-            // IEC 61966-2-1:1999 sRGB transfer function
-            // Threshold: 0.0031308
-            if (linear <= 0.0031308)
-            {
-                return 12.92 * linear;
-            }
-            else
-            {
-                return 1.055 * Math.Pow(linear, 1.0 / 2.4) - 0.055;
-            }
         }
 
         /// <summary>

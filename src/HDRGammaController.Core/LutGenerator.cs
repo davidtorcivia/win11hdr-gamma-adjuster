@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Concurrent;
-using System.Linq;
 using HDRGammaController.Core.Calibration;
 
 namespace HDRGammaController.Core
@@ -21,12 +20,19 @@ namespace HDRGammaController.Core
     /// </remarks>
     public static class LutGenerator
     {
-        // Cache for computed LUTs to avoid redundant computation
+        // Cache for computed LUTs to avoid redundant computation.
         // Key: (GammaMode, WhiteLevel rounded to nearest 10, CalibrationHash, IsHdr)
-        private static readonly ConcurrentDictionary<(GammaMode, int, int, bool), (double[], double[], double[], double[])> _lutCache = new();
+        //
+        // CONTRACT: Cached arrays are READ-ONLY. Callers must not mutate them — the cache
+        // hands out shared references directly to avoid 32 KB of per-call allocation at
+        // slider-drag frequencies. Any write to a returned array corrupts future lookups.
+        private static readonly ConcurrentDictionary<(GammaMode, int, int, bool), (double[] R, double[] G, double[] B, double[] Grey)> _lutCache = new();
 
-        // Maximum cache size to prevent unbounded memory growth
-        private const int MaxCacheSize = 50;
+        // Cache ceiling. When we cross it we clear the entire cache at once rather than try to
+        // approximate LRU from ConcurrentDictionary.Keys (which has no defined order, so the
+        // prior "evict oldest" loop was effectively random). A full flush is simpler and the
+        // next few slider ticks repopulate hot entries.
+        private const int MaxCacheSize = 100;
 
         /// <summary>
         /// Generates a 1024-point 1D LUT for HDR gamma correction (single channel, no calibration).
@@ -64,42 +70,21 @@ namespace HDRGammaController.Core
             int calibrationHash = calibration.GetHashCode();
             var cacheKey = (gammaMode, whiteLevelKey, calibrationHash, isHdr);
 
-            // Try to get from cache
             if (_lutCache.TryGetValue(cacheKey, out var cachedLut))
             {
-                // Return copies to prevent modification of cached data
-                return (
-                    (double[])cachedLut.Item1.Clone(),
-                    (double[])cachedLut.Item2.Clone(),
-                    (double[])cachedLut.Item3.Clone(),
-                    (double[])cachedLut.Item4.Clone()
-                );
+                return cachedLut;
             }
 
-            // Generate new LUT
             var result = GenerateLutInternal(gammaMode, sdrWhiteLevel, calibration, isHdr);
 
-            // Add to cache (evict oldest entries if cache is full)
+            // Flush on overflow rather than pretending to LRU over an unordered dictionary.
             if (_lutCache.Count >= MaxCacheSize)
             {
-                // Simple eviction: clear half the cache when full
-                // A more sophisticated LRU could be implemented if needed
-                var keysToRemove = _lutCache.Keys.Take(MaxCacheSize / 2).ToArray();
-                foreach (var key in keysToRemove)
-                {
-                    _lutCache.TryRemove(key, out _);
-                }
+                _lutCache.Clear();
             }
 
             _lutCache.TryAdd(cacheKey, result);
-
-            // Return copies
-            return (
-                (double[])result.Item1.Clone(),
-                (double[])result.Item2.Clone(),
-                (double[])result.Item3.Clone(),
-                (double[])result.Item4.Clone()
-            );
+            return result;
         }
 
         /// <summary>
@@ -160,8 +145,14 @@ namespace HDRGammaController.Core
                 GammaMode.Gamma22 => 2.2,
                 _ => 1.0 // WindowsDefault with calibration
             };
-            
+
             double blackLevel = 0.0;
+
+            // Precompute the PQ-signal position of SDR white. The headroom blend runs in
+            // PQ-signal space (perceptually uniform) rather than linear-nit space — with the
+            // old linear blend a 1000-nit specular was only ~8% toward passthrough, so most
+            // real HDR highlights stayed fully calibrated regardless of the user's intent.
+            double pqSdrWhite = TransferFunctions.PqInverseEotf(sdrWhiteLevel);
 
             for (int i = 0; i < 1024; i++)
             {
@@ -171,7 +162,7 @@ namespace HDRGammaController.Core
                 double linear = TransferFunctions.PqEotf(normalized);
 
                 double outputR, outputG, outputB;
-                
+
                 if (gammaMode == GammaMode.WindowsDefault)
                 {
                     // No gamma correction, just apply calibration
@@ -187,7 +178,7 @@ namespace HDRGammaController.Core
 
                     // 4. Scale to output nits
                     double outputLinear = blackLevel + (sdrWhiteLevel - blackLevel) * gammaApplied;
-                    
+
                     outputR = outputG = outputB = outputLinear;
                 }
 
@@ -198,26 +189,21 @@ namespace HDRGammaController.Core
                     double normR = Math.Clamp(outputR / sdrWhiteLevel, 0, 1);
                     double normG = Math.Clamp(outputG / sdrWhiteLevel, 0, 1);
                     double normB = Math.Clamp(outputB / sdrWhiteLevel, 0, 1);
-                    
+
                     var (adjR, adjG, adjB) = ColorAdjustments.ApplyCalibration(normR, normG, normB, calibration);
-                    
+
                     // Scale back to nits
                     outputR = adjR * sdrWhiteLevel;
                     outputG = adjG * sdrWhiteLevel;
                     outputB = adjB * sdrWhiteLevel;
                 }
 
-                // 6. Encode to PQ
+                // 6. Encode fully-calibrated output to PQ
                 double pqR = TransferFunctions.PqInverseEotf(outputR);
                 double pqG = TransferFunctions.PqInverseEotf(outputG);
                 double pqB = TransferFunctions.PqInverseEotf(outputB);
                 double pqGrey = TransferFunctions.PqInverseEotf((outputR + outputG + outputB) / 3.0);
 
-                // 7. HDR Headroom Preservation
-                // For content below SDR white level: apply full calibration
-                // For HDR headroom (above SDR white): blend toward passthrough
-                // This ensures bright HDR highlights aren't affected by calibration (e.g., warm temperature)
-                // while SDR-range content gets the full calibration treatment.
                 if (linear <= sdrWhiteLevel)
                 {
                     lutR[i] = pqR;
@@ -227,22 +213,49 @@ namespace HDRGammaController.Core
                 }
                 else
                 {
-                    // Blend toward passthrough in HDR headroom
-                    // At sdrWhiteLevel: 100% calibrated output
-                    // At 10000 nits: 100% passthrough (original signal = normalized)
-                    // This preserves HDR highlight detail and color accuracy from source content
-                    double headroomRange = 10000.0 - sdrWhiteLevel;
-                    double headroomPosition = (linear - sdrWhiteLevel) / headroomRange;
-                    double blendFactor = Math.Min(1.0, headroomPosition);
+                    // HDR headroom: blend the fully-calibrated output toward a
+                    // "dim-only passthrough". This preserves the creative grade of
+                    // HDR highlights (no re-gamma, no temperature tint on a 2000-nit
+                    // specular) while still honoring the brightness slider — so a
+                    // user dimming the screen sees highlights come down too.
+                    double headroomSignal = ComputeHeadroomTarget(linear, calibration);
 
-                    lutR[i] = pqR + (normalized - pqR) * blendFactor;
-                    lutG[i] = pqG + (normalized - pqG) * blendFactor;
-                    lutB[i] = pqB + (normalized - pqB) * blendFactor;
-                    lutGrey[i] = pqGrey + (normalized - pqGrey) * blendFactor;
+                    // Blend in PQ-signal space (perceptually uniform) with a smoothstep
+                    // for C¹ continuity at the SDR/HDR boundary, eliminating the visible
+                    // slope-kink the old linear blend produced in smooth gradients.
+                    double t = (normalized - pqSdrWhite) / Math.Max(1.0 - pqSdrWhite, 1e-9);
+                    t = Math.Clamp(t, 0.0, 1.0);
+                    double blendFactor = t * t * (3.0 - 2.0 * t);
+
+                    lutR[i] = pqR + (headroomSignal - pqR) * blendFactor;
+                    lutG[i] = pqG + (headroomSignal - pqG) * blendFactor;
+                    lutB[i] = pqB + (headroomSignal - pqB) * blendFactor;
+                    lutGrey[i] = pqGrey + (headroomSignal - pqGrey) * blendFactor;
                 }
             }
 
             return (lutR, lutG, lutB, lutGrey);
+        }
+
+        /// <summary>
+        /// Target the headroom blend fades toward. We preserve HDR creative intent
+        /// (no gamma/temp/tint on highlights) but keep brightness dimming active — otherwise
+        /// dimming the screen leaves HDR highlights at full brightness, which the user
+        /// experiences as specular bloom punching through a dimmed UI.
+        /// </summary>
+        private static double ComputeHeadroomTarget(double linearNits, CalibrationSettings calibration)
+        {
+            if (calibration.Brightness >= 100.0)
+            {
+                // No dimming — target is pure passthrough. Re-encode original linear nits
+                // to PQ. For i at the upper end this equals the input signal, matching the
+                // old identity-passthrough behavior where no dimming is requested.
+                return TransferFunctions.PqInverseEotf(linearNits);
+            }
+
+            double dimmed = ColorAdjustments.ApplyDimmingNits(
+                linearNits, calibration.Brightness, calibration.UseLinearBrightness);
+            return TransferFunctions.PqInverseEotf(dimmed);
         }
 
         #region Calibrated LUT Generation
@@ -317,6 +330,7 @@ namespace HDRGammaController.Core
 
             // HDR Mode with calibration-aware compensation
             double blackLevel = characterization.BlackLevel;
+            double pqSdrWhite = TransferFunctions.PqInverseEotf(sdrWhiteLevel);
 
             for (int i = 0; i < 1024; i++)
             {
@@ -371,7 +385,6 @@ namespace HDRGammaController.Core
                 double pqB = TransferFunctions.PqInverseEotf(compensatedB);
                 double pqGrey = TransferFunctions.PqInverseEotf((compensatedR + compensatedG + compensatedB) / 3.0);
 
-                // 6. HDR Headroom Preservation
                 if (linear <= sdrWhiteLevel)
                 {
                     lutR[i] = pqR;
@@ -381,15 +394,18 @@ namespace HDRGammaController.Core
                 }
                 else
                 {
-                    // Blend toward passthrough in HDR headroom
-                    double headroomRange = 10000.0 - sdrWhiteLevel;
-                    double headroomPosition = (linear - sdrWhiteLevel) / headroomRange;
-                    double blendFactor = Math.Min(1.0, headroomPosition);
+                    // Headroom: blend toward a dim-aware passthrough in PQ-signal space
+                    // with a smoothstep. See GenerateLutInternal for rationale.
+                    double headroomSignal = ComputeHeadroomTarget(linear, calibration);
 
-                    lutR[i] = pqR + (normalized - pqR) * blendFactor;
-                    lutG[i] = pqG + (normalized - pqG) * blendFactor;
-                    lutB[i] = pqB + (normalized - pqB) * blendFactor;
-                    lutGrey[i] = pqGrey + (normalized - pqGrey) * blendFactor;
+                    double t = (normalized - pqSdrWhite) / Math.Max(1.0 - pqSdrWhite, 1e-9);
+                    t = Math.Clamp(t, 0.0, 1.0);
+                    double blendFactor = t * t * (3.0 - 2.0 * t);
+
+                    lutR[i] = pqR + (headroomSignal - pqR) * blendFactor;
+                    lutG[i] = pqG + (headroomSignal - pqG) * blendFactor;
+                    lutB[i] = pqB + (headroomSignal - pqB) * blendFactor;
+                    lutGrey[i] = pqGrey + (headroomSignal - pqGrey) * blendFactor;
                 }
             }
 

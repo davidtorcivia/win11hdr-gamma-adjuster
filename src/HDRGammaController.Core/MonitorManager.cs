@@ -64,17 +64,27 @@ namespace HDRGammaController.Core
 
                     if (pAdapter == IntPtr.Zero) break;
                     
-                    // Wrap adapter using GetObjectForIUnknown and cast via interface
+                    // Wrap adapter using GetObjectForIUnknown and cast via interface.
+                    //
+                    // COM lifetime invariant: `pAdapter` is a raw IntPtr whose refcount we
+                    // release via Marshal.Release below. `GetObjectForIUnknown` creates a
+                    // managed RCW with its own refcount; if the cast to IDXGIAdapter1 fails
+                    // we must release that RCW explicitly — otherwise the orphaned refcount
+                    // is only reclaimed at finalization, leaking one per failed enumeration.
                     Dxgi.IDXGIAdapter1? adapter = null;
+                    object? adapterObj = null;
                     try {
-                        object? adapterObj = Marshal.GetObjectForIUnknown(pAdapter);
+                        adapterObj = Marshal.GetObjectForIUnknown(pAdapter);
                         adapter = adapterObj as Dxgi.IDXGIAdapter1;
                         if (adapter == null && adapterObj != null)
                         {
                             Console.WriteLine($"MonitorManager: Adapter {adapterIndex} doesn't support IDXGIAdapter1, type: {adapterObj.GetType().Name}");
+                            Marshal.ReleaseComObject(adapterObj);
+                            adapterObj = null;
                         }
                     } catch (Exception ex) {
                         Console.WriteLine($"MonitorManager: Exception wrapping adapter {adapterIndex}: {ex.GetType().Name}: {ex.Message}");
+                        if (adapterObj != null) { try { Marshal.ReleaseComObject(adapterObj); } catch { } }
                     }
                     
                     if (adapter == null) {
@@ -109,17 +119,24 @@ namespace HDRGammaController.Core
 
                         Console.WriteLine($"MonitorManager: Found output {outputIndex}");
 
-                        // QueryInterface for Output6 (HDR)
+                        // QueryInterface for Output6 (HDR). Same RCW lifetime rule as adapters —
+                        // if the cast fails we still own a refcount and must release it.
                         Dxgi.IDXGIOutput6? output6 = null;
+                        object? outObj = null;
                         try
                         {
-                            // If we have pOutput, we can get object
-                            object? outObj = Marshal.GetObjectForIUnknown(pOutput);
+                            outObj = Marshal.GetObjectForIUnknown(pOutput);
                             output6 = outObj as Dxgi.IDXGIOutput6;
+                            if (output6 == null && outObj != null)
+                            {
+                                Marshal.ReleaseComObject(outObj);
+                                outObj = null;
+                            }
                         }
                         catch (Exception ex)
                         {
                             Console.WriteLine($"MonitorManager: Failed to get IDXGIOutput6 for output {outputIndex}: {ex.Message}");
+                            if (outObj != null) { try { Marshal.ReleaseComObject(outObj); } catch { } }
                         }
 
                         if (output6 != null)

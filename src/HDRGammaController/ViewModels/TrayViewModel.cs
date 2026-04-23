@@ -15,6 +15,10 @@ namespace HDRGammaController.ViewModels
 {
     public class TrayViewModel
     {
+        // Per-monitor coalescer: rapid slider drags collapse to one dispwin call per
+        // completed invocation instead of queueing a backlog. See LatestValueCoalescer
+        // for the concurrency contract and its tests for the proof.
+        private readonly LatestValueCoalescer<IntPtr, (MonitorInfo Monitor, GammaMode Mode, CalibrationSettings Calibration, double WhiteLevel)> _applyCoalescer;
         public event Action<string, string>? NotificationRequested;
         
         private readonly MonitorManager _monitorManager;
@@ -74,6 +78,19 @@ namespace HDRGammaController.ViewModels
             _profileManager = new ProfileManager(profileTemplatePath);
             _dispwinRunner = new DispwinRunner(); // Auto-detects
             _hotkeyManager = hotkeyManager;
+
+            _applyCoalescer = new LatestValueCoalescer<IntPtr, (MonitorInfo, GammaMode, CalibrationSettings, double)>(
+                (_, item) =>
+                {
+                    try
+                    {
+                        _dispwinRunner.ApplyGamma(item.Item1, item.Item2, item.Item4, item.Item3);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"RequestApply error ({item.Item1.FriendlyName}): {ex.Message}");
+                    }
+                });
 
             ExitCommand = new RelayCommand(_ => Application.Current.Shutdown());
             RefreshCommand = new RelayCommand(_ => RefreshMonitors());
@@ -247,73 +264,52 @@ namespace HDRGammaController.ViewModels
         
         public void RequestApply(MonitorInfo monitor, GammaMode mode, CalibrationSettings? manualCalibration = null, int? nightKelvinOverride = null)
         {
-             // Use override if provided (during drag preview), else service's kelvin
+            // Resolve the effective calibration synchronously on the caller's thread. This
+            // keeps us reading fresh state (settings, night mode, exclusions) right at the
+            // moment of the request, even if the actual apply is delayed by coalescing.
             int currentKelvin = nightKelvinOverride ?? _nightModeService.CurrentNightKelvin;
             if (_nightModeManuallyDisabled) currentKelvin = 6500;
-            
-            // Check for App Exclusion Block
-            if (_blockedMonitors.Contains(monitor.HMonitor))
-            {
-                currentKelvin = 6500;
-            }
+            if (_blockedMonitors.Contains(monitor.HMonitor)) currentKelvin = 6500;
 
-            // Force active if override provided (to ensure preview works even if service is at 6500)
             bool nightModeActive = nightKelvinOverride.HasValue || currentKelvin < 6450;
-            
-            try 
-            { 
-                 // If manual calibration is provided (from live preview), use it.
-                 // Otherwise load from profile.
-                 CalibrationSettings calibration;
-                 double brightness = 100;
-                 
-                 if (manualCalibration != null)
-                 {
-                     calibration = manualCalibration;
-                     brightness = calibration.Brightness; // Approx
-                 }
-                 else
-                 {
-                    var profile = _settingsManager.GetMonitorProfile(monitor.MonitorDevicePath) ?? new MonitorProfileData();
-                    calibration = profile.ToCalibrationSettings();
-                    brightness = profile.Brightness;
-                 }
 
-                // Apply static offset
-                calibration.Temperature += calibration.TemperatureOffset;
-
-                // Apply night mode temperature if active
-                if (nightModeActive)
-                {
-                    // Calculate night mode shift (-50 to +50 scale)
-                    double nightShift = (currentKelvin - 6500) / 70.0;
-                    calibration.Temperature += nightShift;
-
-                    // Apply night mode algorithm and ultra warm settings
-                    calibration.Algorithm = _settingsManager.NightMode.Algorithm;
-                    calibration.UseUltraWarmMode = _settingsManager.NightMode.UseUltraWarmMode;
-                }
-                
-                // Clamp to extended range: -65.7 to +50 maps to 1900K-10000K
-                // This allows night mode schedule to use temps below 3000K
-                calibration.Temperature = Math.Clamp(calibration.Temperature, -65.7, 50.0);
-                
-                Console.WriteLine($"RequestApply: Applying {monitor.FriendlyName} - Gamma={mode}, Brightness={brightness}, Temp={calibration.Temperature:F1}");
-                _dispwinRunner.ApplyGamma(monitor, mode, monitor.SdrWhiteLevel, calibration); 
-                
-                // Update persistent state if this wasn't a manual preview
-                if (manualCalibration == null)
-                {
-                     monitor.CurrentGamma = mode;
-                     if (!string.IsNullOrEmpty(monitor.MonitorDevicePath))
-                     {
-                         _settingsManager.SetProfileForMonitor(monitor.MonitorDevicePath, mode);
-                     }
-                }
-            } catch (Exception ex) 
+            CalibrationSettings calibration;
+            if (manualCalibration != null)
             {
-                Console.WriteLine($"RequestApply error: {ex.Message}");
+                // Clone so later night-mode / offset mutations don't leak back into the caller's object.
+                calibration = manualCalibration.Clone();
             }
+            else
+            {
+                var profile = _settingsManager.GetMonitorProfile(monitor.MonitorDevicePath) ?? new MonitorProfileData();
+                calibration = profile.ToCalibrationSettings();
+            }
+
+            calibration.Temperature += calibration.TemperatureOffset;
+
+            if (nightModeActive)
+            {
+                double nightShift = (currentKelvin - 6500) / 70.0;
+                calibration.Temperature += nightShift;
+                calibration.Algorithm = _settingsManager.NightMode.Algorithm;
+                calibration.UseUltraWarmMode = _settingsManager.NightMode.UseUltraWarmMode;
+            }
+
+            // Extended range: -65.7 → 1900K, +50 → 10000K. See CalibrationSettings.Temperature
+            // for why this goes past the slider's nominal -50..+50.
+            calibration.Temperature = Math.Clamp(calibration.Temperature, -65.7, 50.0);
+
+            // Update persistent state only for real (non-preview) applies.
+            if (manualCalibration == null)
+            {
+                monitor.CurrentGamma = mode;
+                if (!string.IsNullOrEmpty(monitor.MonitorDevicePath))
+                {
+                    _settingsManager.SetProfileForMonitor(monitor.MonitorDevicePath, mode);
+                }
+            }
+
+            _applyCoalescer.Submit(monitor.HMonitor, (monitor, mode, calibration, monitor.SdrWhiteLevel));
         }
 
         private void ApplyAll()

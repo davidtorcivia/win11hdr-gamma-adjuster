@@ -136,14 +136,22 @@ namespace HDRGammaController.Core
 
             if (result == MessageBoxResult.Yes)
             {
-                // Run download async but block UI with a wait dialog
                 bool success = false;
                 try
                 {
+                    // 5-minute ceiling protects the UI from hanging on a stalled mirror.
+                    // Wait() with a timeout returns false if the task didn't complete in time.
                     var downloadTask = ArgyllDownloader.DownloadAsync();
-                    // Simple blocking wait - in production would show progress dialog
-                    downloadTask.Wait();
-                    success = downloadTask.Result;
+                    if (!downloadTask.Wait(TimeSpan.FromMinutes(5)))
+                    {
+                        MessageBox.Show(
+                            "ArgyllCMS download timed out.\nPlease check your connection and try again.",
+                            "Download timeout", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    }
+                    else
+                    {
+                        success = downloadTask.Result;
+                    }
                 }
                 catch (Exception ex)
                 {

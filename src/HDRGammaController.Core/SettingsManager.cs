@@ -237,7 +237,6 @@ namespace HDRGammaController.Core
                     Converters = { new JsonStringEnumConverter() }
                 };
                 string json = JsonSerializer.Serialize(_data, options);
-                Console.WriteLine($"SettingsManager.Save: JSON preview (first 500 chars):\n{json.Substring(0, Math.Min(500, json.Length))}");
                 File.WriteAllText(SettingsFilePath, json);
                 Console.WriteLine($"SettingsManager: Saved {_data.MonitorProfiles.Count} monitor profiles.");
             }

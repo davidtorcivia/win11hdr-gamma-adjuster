@@ -1,6 +1,7 @@
 using System;
 using System.Windows;
 using System.Windows.Media;
+using Microsoft.Win32;
 using Hardcodet.Wpf.TaskbarNotification;
 using HDRGammaController.Services;
 
@@ -8,7 +9,6 @@ namespace HDRGammaController
 {
     public partial class App : Application
     {
-
         protected override void OnStartup(StartupEventArgs e)
         {
             try
@@ -23,10 +23,12 @@ namespace HDRGammaController
                     Console.WriteLine($"App.OnStartup: Extracted/updated {extracted} ICM profiles");
                 }
 
-                // Apply theme based on Windows settings
+                // Apply theme based on Windows settings; re-apply when the user flips
+                // between Light and Dark in Windows Settings without restarting the app.
                 ApplyTheme();
+                SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
+                Exit += (_, _) => SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
 
-                // Create MainWindow (Settings) but valid properties
                 Console.WriteLine("App.OnStartup: Creating MainWindow...");
                 var mainWindow = new MainWindow();
                 Console.WriteLine("App.OnStartup: MainWindow created.");
@@ -35,11 +37,20 @@ namespace HDRGammaController
             {
                 Console.WriteLine("CRITICAL STARTUP ERROR: " + ex);
                 System.IO.File.WriteAllText("startup_log.txt", ex.ToString());
-                // MessageBox.Show("Startup Error: " + ex.Message);
                 Shutdown(-1);
             }
         }
-        
+
+        private void OnUserPreferenceChanged(object? sender, UserPreferenceChangedEventArgs e)
+        {
+            // UserPreferenceCategory.General fires on most color/theme changes.
+            if (e.Category == UserPreferenceCategory.General ||
+                e.Category == UserPreferenceCategory.Color)
+            {
+                Dispatcher.Invoke(ApplyTheme);
+            }
+        }
+
         private void ApplyTheme()
         {
             bool isDark = ThemeDetector.IsDarkMode();

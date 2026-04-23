@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
-using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -11,6 +10,11 @@ namespace HDRGammaController.Core.Calibration
     /// <summary>
     /// Utility class for downloading and managing ArgyllCMS binaries.
     /// Provides shared download functionality for both dispwin (gamma) and spotread (calibration).
+    ///
+    /// Integrity: we rely on HTTPS cert validation of argyllcms.com as the trust boundary —
+    /// a pinned SHA256 was considered and rejected because the maintenance burden of keeping
+    /// a hash current through upstream rebuilds would outweigh the marginal security it adds
+    /// on top of TLS for a long-deployed app without a release cadence guarantee.
     /// </summary>
     public static class ArgyllDownloader
     {
@@ -23,12 +27,6 @@ namespace HDRGammaController.Core.Calibration
         /// Current ArgyllCMS version being downloaded.
         /// </summary>
         public const string ArgyllVersion = "Argyll_V3.3.0";
-
-        /// <summary>
-        /// SHA256 checksum for integrity verification (update when ArgyllCMS version changes).
-        /// Empty = skip verification.
-        /// </summary>
-        public const string ArgyllExpectedSha256 = ""; // Set to actual hash when known
 
         /// <summary>
         /// Minimum required version string (used for version comparison).
@@ -168,20 +166,8 @@ namespace HDRGammaController.Core.Calibration
                     }
                 }
 
-                ReportProgress("Download complete, verifying...", 70);
-                progress?.Report(70);
-
-                // Verify checksum if configured
-                if (!string.IsNullOrEmpty(ArgyllExpectedSha256))
-                {
-                    string actualHash = ComputeSha256(zipPath);
-                    if (!actualHash.Equals(ArgyllExpectedSha256, StringComparison.OrdinalIgnoreCase))
-                    {
-                        throw new InvalidOperationException(
-                            $"Downloaded file failed integrity check.\nExpected SHA256: {ArgyllExpectedSha256}\nActual SHA256: {actualHash}");
-                    }
-                    ReportProgress("Checksum verified", 75);
-                }
+                ReportProgress("Download complete", 75);
+                progress?.Report(75);
 
                 // Extract
                 ReportProgress("Extracting files...", 80);
@@ -262,17 +248,6 @@ namespace HDRGammaController.Core.Calibration
                     catch { /* Ignore cleanup errors */ }
                 }
             }
-        }
-
-        /// <summary>
-        /// Computes SHA256 hash of a file.
-        /// </summary>
-        private static string ComputeSha256(string filePath)
-        {
-            using var sha256 = SHA256.Create();
-            using var stream = File.OpenRead(filePath);
-            byte[] hash = sha256.ComputeHash(stream);
-            return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
         }
 
         private static void ReportProgress(string message, int percent)

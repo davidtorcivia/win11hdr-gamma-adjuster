@@ -25,7 +25,11 @@ namespace HDRGammaController.Core
         public double Brightness { get; set; } = 100.0;
         
         /// <summary>
-        /// Color temperature adjustment (-50 to +50).
+        /// Color temperature adjustment. The UI slider uses -50..+50 (mapped to 2700K..10000K
+        /// around a 6500K neutral, 70 K per unit), but the field itself accepts an extended
+        /// range down to about -65.7 so night-mode schedules and per-monitor offsets can stack
+        /// past the slider without being clipped mid-pipeline. <see cref="GetTemperatureMultipliers"/>
+        /// re-clamps to 1000..10000 K when resolving the RGB multipliers.
         /// Negative = warmer (more red/yellow), Positive = cooler (more blue).
         /// </summary>
         public double Temperature { get; set; } = 0.0;
