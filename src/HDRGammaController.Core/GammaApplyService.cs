@@ -10,11 +10,16 @@ namespace HDRGammaController.Core
     /// TrayViewModel so the apply pipeline has a single owner with no UI
     /// dependencies.
     /// </summary>
-    public class GammaApplyService
+    public class GammaApplyService : IDisposable
     {
         private readonly DispwinRunner _dispwinRunner;
         private readonly SettingsManager _settingsManager;
         private readonly NightModeService _nightModeService;
+
+        // Ramp guard: periodically verify the hardware still holds what we applied
+        // and restore it when a fullscreen game or driver event stomps the VCGT.
+        // Readback is ~free, so a 10s cadence costs nothing measurable.
+        private readonly System.Timers.Timer _rampGuard;
 
         // Per-monitor coalescer: rapid slider drags collapse to one dispwin call per
         // completed invocation instead of queueing a backlog. See LatestValueCoalescer
@@ -44,6 +49,20 @@ namespace HDRGammaController.Core
                         Log.Error($"GammaApplyService: apply failed ({item.Item1.FriendlyName}): {ex.Message}");
                     }
                 });
+
+            _rampGuard = new System.Timers.Timer(10000) { AutoReset = true };
+            _rampGuard.Elapsed += (_, _) =>
+            {
+                try { _dispwinRunner.VerifyAndRestoreRamps(); }
+                catch (Exception ex) { Log.Error($"GammaApplyService: ramp guard tick failed: {ex.Message}"); }
+            };
+            _rampGuard.Start();
+        }
+
+        public void Dispose()
+        {
+            _rampGuard.Stop();
+            _rampGuard.Dispose();
         }
 
         /// <summary>

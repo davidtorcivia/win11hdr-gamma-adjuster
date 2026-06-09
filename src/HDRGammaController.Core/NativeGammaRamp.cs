@@ -52,6 +52,39 @@ namespace HDRGammaController.Core
             return SetRamp(deviceName, ref ramp);
         }
 
+        /// <summary>
+        /// Reads the display's current hardware ramp. Returns false (with empty
+        /// arrays) if the DC can't be created or the driver refuses the read.
+        /// </summary>
+        public static bool TryRead(string deviceName, out ushort[] red, out ushort[] green, out ushort[] blue)
+        {
+            red = green = blue = Array.Empty<ushort>();
+            if (string.IsNullOrEmpty(deviceName)) return false;
+
+            IntPtr hdc = IntPtr.Zero;
+            try
+            {
+                hdc = Gdi32.CreateDC(deviceName, deviceName, null, IntPtr.Zero);
+                if (hdc == IntPtr.Zero) return false;
+
+                var ramp = Gdi32.GammaRamp.Create();
+                if (!Gdi32.GetDeviceGammaRamp(hdc, ref ramp)) return false;
+
+                red = ramp.Red;
+                green = ramp.Green;
+                blue = ramp.Blue;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+            finally
+            {
+                if (hdc != IntPtr.Zero) Gdi32.DeleteDC(hdc);
+            }
+        }
+
         /// <summary>Restores the identity (linear) ramp.</summary>
         public static bool TryClear(string deviceName)
         {

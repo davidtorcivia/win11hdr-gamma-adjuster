@@ -263,11 +263,17 @@ namespace HDRGammaController.Core
         public void SetProfileForMonitor(string monitorDevicePath, GammaMode mode)
         {
             if (string.IsNullOrEmpty(monitorDevicePath)) return;
-            
+
             if (!_data.MonitorProfiles.TryGetValue(monitorDevicePath, out var profile))
             {
                 profile = new MonitorProfileData();
                 _data.MonitorProfiles[monitorDevicePath] = profile;
+            }
+            else if (profile.GammaMode == mode)
+            {
+                // Called on every apply (including each night-mode fade step); skip the
+                // serialize-and-write when nothing actually changed.
+                return;
             }
             profile.GammaMode = mode;
             Save();

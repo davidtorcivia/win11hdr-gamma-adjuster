@@ -61,6 +61,12 @@ namespace HDRGammaController.ViewModels
 
             _applyService = new GammaApplyService(_dispwinRunner, _settingsManager, _nightModeService);
 
+            _dispwinRunner.DispwinUnavailable += () =>
+                Application.Current.Dispatcher.Invoke(() =>
+                    NotificationRequested?.Invoke("ArgyllCMS Not Found",
+                        "Native gamma apply failed and dispwin.exe is unavailable.\n" +
+                        "Open Calibrate Display to download ArgyllCMS."));
+
             _nightModeService.BlendChanged += (blend) =>
             {
                 // The hardware apply is thread-agnostic, but ApplyAll reads TrayItems,
@@ -345,7 +351,9 @@ namespace HDRGammaController.ViewModels
 
         public void Dispose()
         {
-            // Stops the night-mode timer and unhooks the foreground-window event hook.
+            // Stops the night-mode and ramp-guard timers and unhooks the
+            // foreground-window event hook.
+            _applyService.Dispose();
             _nightModeService.Dispose();
             _appDetectionService.Dispose();
         }

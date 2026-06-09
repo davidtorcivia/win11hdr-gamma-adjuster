@@ -413,7 +413,7 @@ The primary path calls the Win32 `SetDeviceGammaRamp` API directly: the 1024-poi
 - **Universal**: Works across most GPU vendors and driver versions.
 - **Precise**: Bypasses the Windows compositor's color management quirks by speaking directly to the hardware driver.
 
-While VCGT loading is sometimes criticized for its volatility—it can be reset by system events or fullscreen exclusive games—the HDR Gamma Controller mitigates this by monitoring the system state and reapplying the profile automatically when necessary, ensuring that the correction remains persistent and stable without requiring user intervention.
+While VCGT loading is sometimes criticized for its volatility—it can be reset by system events or fullscreen exclusive games—the HDR Gamma Controller counters this with a **ramp guard**: every 10 seconds it reads each display's hardware ramp back via `GetDeviceGammaRamp` (an essentially free call), compares it against the ramp it last applied, and silently restores the correction if anything overwrote it. Displays whose drivers transform ramps on write (so a readback can never match) are detected and excluded after one restore attempt, preventing a restore-flash loop. Combined with re-application on display-configuration changes and resume-from-sleep, the correction is self-healing without user intervention.
 
 #### Apply Hygiene: Why Re-Apply Discipline Matters
 
@@ -422,6 +422,7 @@ Each `dispwin` invocation rewrites the GPU gamma ramp in a single step, and on a
 - **Identical-LUT deduplication.** Before spawning `dispwin`, the generated per-channel LUTs are compared against the last set successfully applied to that display; if nothing changed, the spawn is skipped entirely. This converts the many internal triggers that converge on a re-apply (foreground-app changes, settings touches, night-mode ticks) into no-ops whenever the output would be identical.
 - **Cache invalidation on external resets.** Deduplication is only safe while the application's record of the ramp state is accurate. Display configuration changes and resume-from-sleep can reset the ramp behind the application's back, so both events invalidate the dedupe cache before triggering a re-apply—guaranteeing the correction is restored even though the LUT "hasn't changed."
 - **Event debouncing.** Windows emits `WM_DISPLAYCHANGE` in bursts during HDR mode transitions. Events are coalesced so that only the final event in a burst, after a settling delay, performs the monitor re-enumeration and re-apply; superseded handlers abandon their work rather than queueing overlapping ramp writes.
+- **Ramp guard.** A 10-second readback poll detects external overwrites (fullscreen exclusive games, driver events, other color tools) and restores the applied ramp — writing only when the hardware state has actually diverged.
 
 Together with the night-mode scheduler's single-event-per-state-change contract (§6.6), these ensure the ramp is written exactly once per genuine change in desired output.
 

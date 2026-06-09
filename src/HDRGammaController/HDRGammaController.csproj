@@ -9,7 +9,14 @@
     <RollForward>LatestMajor</RollForward>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <PublishTrimmed>false</PublishTrimmed>
+    <!-- Stamped at compile time; UpdateService compares it against the GitHub
+         release published_at, since the rolling 'latest' tag has no semver. -->
+    <BuildTimestampUtc>$([System.DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"))</BuildTimestampUtc>
   </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="BuildTimestampUtc" Value="$(BuildTimestampUtc)" />
+  </ItemGroup>
 
   <ItemGroup>
     <Resource Include="app.ico" />

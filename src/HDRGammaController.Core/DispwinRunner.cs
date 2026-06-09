@@ -6,7 +6,6 @@ using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Globalization;
-using System.Windows;
 using HDRGammaController.Core.Calibration;
 
 namespace HDRGammaController.Core
@@ -39,7 +38,75 @@ namespace HDRGammaController.Core
         public void InvalidateAppliedState()
         {
             _lastApplied.Clear();
+            _unverifiableDisplays.Clear();
             lock (_displayIndexLock) { _displayIndexMap = null; }
+        }
+
+        // --- Ramp guard ---------------------------------------------------------
+        // Fullscreen exclusive games and some driver events silently reset the VCGT.
+        // GetDeviceGammaRamp readback is essentially free, so we can verify each
+        // display still holds the ramp we last applied and restore it when stomped.
+
+        // Displays whose drivers transform ramps on write (readback never matches
+        // what we set). Guarded once, then excluded — otherwise we'd "restore" on
+        // every poll and flash the screen.
+        private readonly ConcurrentDictionary<string, bool> _unverifiableDisplays = new();
+
+        // Drivers may quantize ramp entries (e.g. 10-bit hardware); allow ~0.8% of
+        // full scale before calling it an external overwrite. Real stomps (identity
+        // resets, other apps' night modes) deviate far more than this.
+        private const int RampToleranceCounts = 512;
+
+        /// <summary>
+        /// Verifies each display still holds the ramp we last applied and restores it
+        /// if something overwrote it externally. Returns the number restored.
+        /// </summary>
+        public int VerifyAndRestoreRamps()
+        {
+            int restored = 0;
+            foreach (var kvp in _lastApplied)
+            {
+                string device = kvp.Key;
+                if (_unverifiableDisplays.ContainsKey(device)) continue;
+
+                try
+                {
+                    if (RampMatchesApplied(device, kvp.Value)) continue;
+
+                    Log.Info($"DispwinRunner: Ramp on {device} was overwritten externally; restoring");
+                    if (!NativeGammaRamp.TryApply(device, kvp.Value.R, kvp.Value.G, kvp.Value.B)) continue;
+                    restored++;
+
+                    if (!RampMatchesApplied(device, kvp.Value))
+                    {
+                        _unverifiableDisplays[device] = true;
+                        Log.Error($"DispwinRunner: {device} readback never matches the written ramp; ramp guard disabled for this display");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"DispwinRunner: Ramp guard error on {device}: {ex.Message}");
+                }
+            }
+            return restored;
+        }
+
+        private static bool RampMatchesApplied(string device, (double[] R, double[] G, double[] B) luts)
+        {
+            // Treat an unreadable ramp as a match — never fight a display we can't see.
+            if (!NativeGammaRamp.TryRead(device, out var r, out var g, out var b)) return true;
+            return ChannelMatches(r, luts.R) && ChannelMatches(g, luts.G) && ChannelMatches(b, luts.B);
+        }
+
+        private static bool ChannelMatches(ushort[] hardware, double[] lut)
+        {
+            var expected = NativeGammaRamp.BuildRampChannel(lut);
+            if (hardware.Length != expected.Length) return false;
+            for (int i = 0; i < expected.Length; i++)
+            {
+                if (Math.Abs(hardware[i] - expected[i]) > RampToleranceCounts) return false;
+            }
+            return true;
         }
 
         private int ResolveDisplayIndex(MonitorInfo monitor)
@@ -214,6 +281,14 @@ namespace HDRGammaController.Core
             return string.Empty;
         }
 
+        /// <summary>
+        /// Raised (once per process) when the dispwin fallback was needed but no
+        /// dispwin.exe could be found. The GUI layer decides how to surface this —
+        /// Core must not show UI, and this code path runs on background threads.
+        /// </summary>
+        public event Action? DispwinUnavailable;
+        private bool _dispwinMissingNotified;
+
         public bool EnsureConfigured()
         {
             if (!string.IsNullOrEmpty(_dispwinPath)) return true;
@@ -222,51 +297,12 @@ namespace HDRGammaController.Core
             _dispwinPath = FindDispwin();
             if (!string.IsNullOrEmpty(_dispwinPath)) return true;
 
-            // Offer to auto-download using shared ArgyllDownloader
-            var result = MessageBox.Show(
-                "ArgyllCMS 'dispwin.exe' not found.\n\n" +
-                "This application requires ArgyllCMS to apply gamma tables.\n" +
-                $"Would you like to download ArgyllCMS {ArgyllDownloader.ArgyllVersion} automatically?\n\n" +
-                "(This will download ~15MB from argyllcms.com)",
-                "HDR Gamma Controller - Missing Dependency",
-                MessageBoxButton.YesNo, MessageBoxImage.Question);
-
-            if (result == MessageBoxResult.Yes)
+            if (!_dispwinMissingNotified)
             {
-                bool success = false;
-                try
-                {
-                    // 5-minute ceiling protects the UI from hanging on a stalled mirror.
-                    // Wait() with a timeout returns false if the task didn't complete in time.
-                    var downloadTask = ArgyllDownloader.DownloadAsync();
-                    if (!downloadTask.Wait(TimeSpan.FromMinutes(5)))
-                    {
-                        MessageBox.Show(
-                            "ArgyllCMS download timed out.\nPlease check your connection and try again.",
-                            "Download timeout", MessageBoxButton.OK, MessageBoxImage.Warning);
-                    }
-                    else
-                    {
-                        success = downloadTask.Result;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Log.Info($"DispwinRunner: Download failed: {ex.Message}");
-                    MessageBox.Show($"Download failed:\n{ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                }
-
-                if (success)
-                {
-                    _dispwinPath = FindDispwin();
-                    if (!string.IsNullOrEmpty(_dispwinPath))
-                    {
-                        MessageBox.Show("ArgyllCMS downloaded successfully!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
-                        return true;
-                    }
-                }
+                _dispwinMissingNotified = true;
+                Log.Error("DispwinRunner: dispwin.exe not found; fallback unavailable until ArgyllCMS is installed (Calibrate Display can download it).");
+                DispwinUnavailable?.Invoke();
             }
-
             return false;
         }
 
