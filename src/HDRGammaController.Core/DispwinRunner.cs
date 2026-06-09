@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Globalization;
 using System.Windows;
 using HDRGammaController.Core.Calibration;
@@ -20,17 +22,97 @@ namespace HDRGammaController.Core
         // references handed out by LutGenerator's cache; they are never mutated.
         private readonly ConcurrentDictionary<string, (double[] R, double[] G, double[] B)> _lastApplied = new();
 
+        // dispwin numbers displays by its own (GDI) enumeration, which is not
+        // guaranteed to match DXGI adapter/output order — and the old OutputId+1
+        // heuristic breaks outright on multi-adapter systems. We parse the display
+        // list from dispwin's usage output once and match by GDI device name
+        // (\\.\DISPLAYn), falling back to OutputId+1 if anything fails.
+        private Dictionary<string, int>? _displayIndexMap;
+        private readonly object _displayIndexLock = new object();
+
         /// <summary>
-        /// Forgets all previously-applied LUTs so the next apply always runs dispwin.
-        /// Call after events that may have reset the GPU gamma ramp behind our back
+        /// Forgets all previously-applied LUTs so the next apply always runs dispwin,
+        /// and re-reads dispwin's display numbering. Call after events that may have
+        /// changed the display topology or reset the GPU gamma ramp behind our back
         /// (display configuration changes, resume from sleep).
         /// </summary>
-        public void InvalidateAppliedState() => _lastApplied.Clear();
+        public void InvalidateAppliedState()
+        {
+            _lastApplied.Clear();
+            lock (_displayIndexLock) { _displayIndexMap = null; }
+        }
+
+        private int ResolveDisplayIndex(MonitorInfo monitor)
+        {
+            // MonitorInfo.DeviceName is the GDI name, e.g. @"\\.\DISPLAY1".
+            string gdiName = (monitor.DeviceName ?? string.Empty).TrimStart('\\', '.');
+            var map = GetDisplayIndexMap();
+            if (gdiName.Length > 0 && map != null && map.TryGetValue(gdiName, out int index))
+            {
+                return index;
+            }
+            return (int)monitor.OutputId + 1;
+        }
+
+        private Dictionary<string, int>? GetDisplayIndexMap()
+        {
+            lock (_displayIndexLock)
+            {
+                if (_displayIndexMap != null) return _displayIndexMap;
+                if (string.IsNullOrEmpty(_dispwinPath)) return null;
+
+                // dispwin's usage text (exit code 1, output on stderr) lists displays as:
+                //     1 = 'DISPLAY1, at 0, 0, width 2560, height 1440 (Primary Display)'
+                var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                try
+                {
+                    var psi = new ProcessStartInfo(_dispwinPath, "-?")
+                    {
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    };
+                    using var p = Process.Start(psi);
+                    if (p != null)
+                    {
+                        var stdoutTask = p.StandardOutput.ReadToEndAsync();
+                        var stderrTask = p.StandardError.ReadToEndAsync();
+                        if (p.WaitForExit(5000))
+                        {
+                            string usage = stdoutTask.GetAwaiter().GetResult() + "\n" +
+                                           stderrTask.GetAwaiter().GetResult();
+                            foreach (Match m in Regex.Matches(usage, @"^\s*(\d+)\s*=\s*'([^,']+),", RegexOptions.Multiline))
+                            {
+                                map[m.Groups[2].Value.Trim()] = int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
+                            }
+                        }
+                        else
+                        {
+                            try { p.Kill(entireProcessTree: true); } catch { }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"DispwinRunner: Failed to query display list: {ex.Message}");
+                }
+
+                if (map.Count > 0)
+                {
+                    Log.Info($"DispwinRunner: Display map: {string.Join(", ", map)}");
+                }
+                // Cache even when empty so a broken dispwin doesn't get re-queried on
+                // every apply; InvalidateAppliedState() clears it for a fresh attempt.
+                _displayIndexMap = map;
+                return map;
+            }
+        }
 
         public DispwinRunner()
         {
              _dispwinPath = FindDispwin();
-             Console.WriteLine($"DispwinRunner: Initialized with path='{_dispwinPath}'");
+             Log.Info($"DispwinRunner: Initialized with path='{_dispwinPath}'");
         }
         
         private string FindDispwin()
@@ -42,7 +124,7 @@ namespace HDRGammaController.Core
             string localAppData = Path.Combine(ArgyllDownloader.LocalArgyllBinDir, "dispwin.exe");
             if (File.Exists(localAppData))
             {
-                Console.WriteLine($"DispwinRunner: Found dispwin in LocalAppData: {localAppData}");
+                Log.Info($"DispwinRunner: Found dispwin in LocalAppData: {localAppData}");
                 return localAppData;
             }
 
@@ -64,7 +146,7 @@ namespace HDRGammaController.Core
             {
                 if (File.Exists(path))
                 {
-                    Console.WriteLine($"DispwinRunner: Found dispwin at trusted path: {path}");
+                    Log.Info($"DispwinRunner: Found dispwin at trusted path: {path}");
                     return path;
                 }
             }
@@ -82,7 +164,7 @@ namespace HDRGammaController.Core
                         string dispwinPath = Path.Combine(argyllDir, "bin", "dispwin.exe");
                         if (File.Exists(dispwinPath))
                         {
-                            Console.WriteLine($"DispwinRunner: Found dispwin in DisplayCAL dir: {dispwinPath}");
+                            Log.Info($"DispwinRunner: Found dispwin in DisplayCAL dir: {dispwinPath}");
                             return dispwinPath;
                         }
                     }
@@ -90,14 +172,14 @@ namespace HDRGammaController.Core
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"DispwinRunner: Error searching AppData: {ex.Message}");
+                Log.Info($"DispwinRunner: Error searching AppData: {ex.Message}");
             }
 
             // 4. Search in PATH (last resort, validates full path before returning)
             string pathResult = FindInPath("dispwin.exe");
             if (!string.IsNullOrEmpty(pathResult))
             {
-                Console.WriteLine($"DispwinRunner: Found dispwin in PATH: {pathResult}");
+                Log.Info($"DispwinRunner: Found dispwin in PATH: {pathResult}");
                 return pathResult;
             }
 
@@ -126,7 +208,7 @@ namespace HDRGammaController.Core
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"DispwinRunner: Error checking PATH entry '{dir}': {ex.Message}");
+                    Log.Info($"DispwinRunner: Error checking PATH entry '{dir}': {ex.Message}");
                 }
             }
             return string.Empty;
@@ -170,7 +252,7 @@ namespace HDRGammaController.Core
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"DispwinRunner: Download failed: {ex.Message}");
+                    Log.Info($"DispwinRunner: Download failed: {ex.Message}");
                     MessageBox.Show($"Download failed:\n{ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
 
@@ -209,11 +291,11 @@ namespace HDRGammaController.Core
         public void ApplyGamma(MonitorInfo monitor, GammaMode mode, double whiteLevel, CalibrationSettings calibration, DisplayCalibrationProfile? calibrationProfile)
         {
             bool hasProfile = calibrationProfile != null;
-            Console.WriteLine($"DispwinRunner.ApplyGamma: monitor={monitor.DeviceName}, mode={mode}, whiteLevel={whiteLevel}, hasCalibration={calibration.HasAdjustments}, hasProfile={hasProfile}");
+            Log.Info($"DispwinRunner.ApplyGamma: monitor={monitor.DeviceName}, mode={mode}, whiteLevel={whiteLevel}, hasCalibration={calibration.HasAdjustments}, hasProfile={hasProfile}");
 
             if (!EnsureConfigured())
             {
-                Console.WriteLine("DispwinRunner.ApplyGamma: Not configured, aborting.");
+                Log.Info("DispwinRunner.ApplyGamma: Not configured, aborting.");
                 return;
             }
 
@@ -226,7 +308,7 @@ namespace HDRGammaController.Core
                 double targetGamma = GammaModeToValue(mode);
                 var characterization = calibrationProfile.ToCharacterization();
 
-                Console.WriteLine($"DispwinRunner.ApplyGamma: Using calibration profile '{calibrationProfile.Name}' (mode={calibrationProfile.Mode})");
+                Log.Info($"DispwinRunner.ApplyGamma: Using calibration profile '{calibrationProfile.Name}' (mode={calibrationProfile.Mode})");
 
                 (lutR, lutG, lutB, _) = LutGenerator.GenerateCalibratedLut(
                     targetGamma,
@@ -241,7 +323,7 @@ namespace HDRGammaController.Core
                 (lutR, lutG, lutB, _) = LutGenerator.GenerateLut(mode, whiteLevel, calibration, monitor.IsHdrActive);
             }
 
-            Console.WriteLine($"DispwinRunner.ApplyGamma: Generated LUTs with {lutR.Length} entries");
+            Log.Info($"DispwinRunner.ApplyGamma: Generated LUTs with {lutR.Length} entries");
 
             // Skip the dispwin spawn (and its visible ramp rewrite) when this display
             // already has exactly this LUT loaded.
@@ -249,7 +331,7 @@ namespace HDRGammaController.Core
             if (_lastApplied.TryGetValue(applyKey, out var last) &&
                 LutsEqual(last.R, lutR) && LutsEqual(last.G, lutG) && LutsEqual(last.B, lutB))
             {
-                Console.WriteLine($"DispwinRunner.ApplyGamma: LUT unchanged for {applyKey}, skipping dispwin");
+                Log.Info($"DispwinRunner.ApplyGamma: LUT unchanged for {applyKey}, skipping dispwin");
                 return;
             }
 
@@ -258,7 +340,7 @@ namespace HDRGammaController.Core
             // (GetTempFileName + ChangeExtension creates a race between file creation and use)
             string calContent = GenerateCalContent(lutR, lutG, lutB);
             string calFile = Path.Combine(Path.GetTempPath(), $"HDRGamma_{Guid.NewGuid():N}.cal");
-            Console.WriteLine($"DispwinRunner.ApplyGamma: Created temp file={calFile}");
+            Log.Info($"DispwinRunner.ApplyGamma: Created temp file={calFile}");
 
             try
             {
@@ -269,9 +351,9 @@ namespace HDRGammaController.Core
                     writer.Write(calContent);
                 }
 
-                int argIndex = (int)monitor.OutputId + 1;
+                int argIndex = ResolveDisplayIndex(monitor);
                 string args = $"-d {argIndex} \"{calFile}\"";
-                Console.WriteLine($"DispwinRunner.ApplyGamma: Running dispwin with args: {args}");
+                Log.Info($"DispwinRunner.ApplyGamma: Running dispwin with args: {args}");
                 if (RunDispwin(args))
                 {
                     _lastApplied[applyKey] = (lutR, lutG, lutB);
@@ -284,7 +366,7 @@ namespace HDRGammaController.Core
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"DispwinRunner.ApplyGamma: Exception: {ex.GetType().Name}: {ex.Message}");
+                Log.Info($"DispwinRunner.ApplyGamma: Exception: {ex.GetType().Name}: {ex.Message}");
                 throw;
             }
             finally
@@ -295,7 +377,7 @@ namespace HDRGammaController.Core
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"DispwinRunner.ApplyGamma: Failed to cleanup temp file: {ex.Message}");
+                    Log.Info($"DispwinRunner.ApplyGamma: Failed to cleanup temp file: {ex.Message}");
                 }
             }
         }
@@ -321,7 +403,7 @@ namespace HDRGammaController.Core
              // The ramp is reset (or in an unknown state on failure) either way.
              _lastApplied.TryRemove(monitor.DeviceName, out _);
 
-             int argIndex = (int)monitor.OutputId + 1;
+             int argIndex = ResolveDisplayIndex(monitor);
              RunDispwin($"-d {argIndex} -c");
         }
 
@@ -339,7 +421,7 @@ namespace HDRGammaController.Core
         /// <returns>True if dispwin ran to completion with exit code 0.</returns>
         private bool RunDispwin(string args)
         {
-            Console.WriteLine($"DispwinRunner.RunDispwin: Executing '{_dispwinPath}' with args '{args}'");
+            Log.Info($"DispwinRunner.RunDispwin: Executing '{_dispwinPath}' with args '{args}'");
             try
             {
                 var psi = new ProcessStartInfo(_dispwinPath, args)
@@ -352,7 +434,7 @@ namespace HDRGammaController.Core
                 using var p = Process.Start(psi);
                 if (p == null)
                 {
-                    Console.WriteLine("DispwinRunner.RunDispwin: Process.Start returned null");
+                    Log.Info("DispwinRunner.RunDispwin: Process.Start returned null");
                     return false;
                 }
 
@@ -363,23 +445,23 @@ namespace HDRGammaController.Core
 
                 if (!p.WaitForExit(5000))
                 {
-                    Console.WriteLine("DispwinRunner.RunDispwin: Timed out after 5s, killing process");
+                    Log.Info("DispwinRunner.RunDispwin: Timed out after 5s, killing process");
                     try { p.Kill(entireProcessTree: true); } catch { }
                     return false;
                 }
 
                 string stdout = stdoutTask.GetAwaiter().GetResult();
                 string stderr = stderrTask.GetAwaiter().GetResult();
-                Console.WriteLine($"DispwinRunner.RunDispwin: Exit code={p.ExitCode}");
+                Log.Info($"DispwinRunner.RunDispwin: Exit code={p.ExitCode}");
                 if (!string.IsNullOrWhiteSpace(stdout))
-                    Console.WriteLine($"DispwinRunner.RunDispwin: stdout={stdout}");
+                    Log.Info($"DispwinRunner.RunDispwin: stdout={stdout}");
                 if (!string.IsNullOrWhiteSpace(stderr))
-                    Console.WriteLine($"DispwinRunner.RunDispwin: stderr={stderr}");
+                    Log.Info($"DispwinRunner.RunDispwin: stderr={stderr}");
                 return p.ExitCode == 0;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"DispwinRunner.RunDispwin: Exception: {ex.GetType().Name}: {ex.Message}");
+                Log.Info($"DispwinRunner.RunDispwin: Exception: {ex.GetType().Name}: {ex.Message}");
                 throw;
             }
         }

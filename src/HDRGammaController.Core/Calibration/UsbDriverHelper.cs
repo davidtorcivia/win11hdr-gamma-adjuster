@@ -97,7 +97,7 @@ namespace HDRGammaController.Core.Calibration
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to launch driver installer: {ex.Message}");
+                Log.Info($"Failed to launch driver installer: {ex.Message}");
                 return false;
             }
         }
@@ -129,7 +129,7 @@ namespace HDRGammaController.Core.Calibration
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to launch driver installer: {ex.Message}");
+                Log.Info($"Failed to launch driver installer: {ex.Message}");
                 return false;
             }
         }

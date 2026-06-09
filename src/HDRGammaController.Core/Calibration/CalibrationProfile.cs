@@ -439,7 +439,7 @@ namespace HDRGammaController.Core.Calibration
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Failed to load profile {file}: {ex.Message}");
+                    Log.Info($"Failed to load profile {file}: {ex.Message}");
                 }
             }
         }
@@ -457,7 +457,7 @@ namespace HDRGammaController.Core.Calibration
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Failed to save profile for {profile.MonitorName}: {ex.Message}");
+                    Log.Info($"Failed to save profile for {profile.MonitorName}: {ex.Message}");
                 }
             }
         }

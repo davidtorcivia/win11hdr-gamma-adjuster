@@ -14,15 +14,15 @@ namespace HDRGammaController.Core
             var monitors = new List<MonitorInfo>();
             
             // 1. Create DXGI Factory1 (Base for newer)
-            Console.WriteLine("MonitorManager: Creating DXGI Factory1...");
+            Log.Info("MonitorManager: Creating DXGI Factory1...");
             Guid iidFactory1 = Dxgi.IID_IDXGIFactory1;
             int hr = Dxgi.CreateDXGIFactory1(ref iidFactory1, out IntPtr pFactory);
-            Console.WriteLine($"MonitorManager: CreateDXGIFactory1 returned HR={hr}, Ptr={pFactory}");
+            Log.Info($"MonitorManager: CreateDXGIFactory1 returned HR={hr}, Ptr={pFactory}");
 
             if (pFactory == IntPtr.Zero)
             {
                 // Fallback or error
-                Console.WriteLine("MonitorManager: Failed to create factory.");
+                Log.Info("MonitorManager: Failed to create factory.");
                 return monitors;
             }
 
@@ -32,12 +32,12 @@ namespace HDRGammaController.Core
                  object? factoryObj = Marshal.GetObjectForIUnknown(pFactory);
                  factory = factoryObj as Dxgi.IDXGIFactory1;
             } catch (Exception ex) {
-                Console.WriteLine($"MonitorManager: Failed to wrap IDXGIFactory1: {ex.Message}");
+                Log.Info($"MonitorManager: Failed to wrap IDXGIFactory1: {ex.Message}");
             }
             
             if (factory == null)
             {
-                Console.WriteLine("MonitorManager: IDXGIFactory1 wrapper failed.");
+                Log.Info("MonitorManager: IDXGIFactory1 wrapper failed.");
                 Marshal.Release(pFactory);
                 return monitors;
             }
@@ -58,7 +58,7 @@ namespace HDRGammaController.Core
                     }
                     if (hr < 0)
                     {
-                        Console.WriteLine($"MonitorManager: EnumAdapters1 failed for {adapterIndex} with HR={hr}");
+                        Log.Info($"MonitorManager: EnumAdapters1 failed for {adapterIndex} with HR={hr}");
                         break;
                     }
 
@@ -78,23 +78,23 @@ namespace HDRGammaController.Core
                         adapter = adapterObj as Dxgi.IDXGIAdapter1;
                         if (adapter == null && adapterObj != null)
                         {
-                            Console.WriteLine($"MonitorManager: Adapter {adapterIndex} doesn't support IDXGIAdapter1, type: {adapterObj.GetType().Name}");
+                            Log.Info($"MonitorManager: Adapter {adapterIndex} doesn't support IDXGIAdapter1, type: {adapterObj.GetType().Name}");
                             Marshal.ReleaseComObject(adapterObj);
                             adapterObj = null;
                         }
                     } catch (Exception ex) {
-                        Console.WriteLine($"MonitorManager: Exception wrapping adapter {adapterIndex}: {ex.GetType().Name}: {ex.Message}");
+                        Log.Info($"MonitorManager: Exception wrapping adapter {adapterIndex}: {ex.GetType().Name}: {ex.Message}");
                         if (adapterObj != null) { try { Marshal.ReleaseComObject(adapterObj); } catch { } }
                     }
                     
                     if (adapter == null) {
-                         Console.WriteLine($"MonitorManager: Failed to wrap IDXGIAdapter1 for index {adapterIndex}");
+                         Log.Info($"MonitorManager: Failed to wrap IDXGIAdapter1 for index {adapterIndex}");
                          Marshal.Release(pAdapter);
                          adapterIndex++;
                          continue;
                     }
 
-                    Console.WriteLine($"MonitorManager: Found adapter at index {adapterIndex}");
+                    Log.Info($"MonitorManager: Found adapter at index {adapterIndex}");
 
                     Dxgi.DXGI_ADAPTER_DESC1 adapterDesc;
                     adapter.GetDesc1(out adapterDesc);
@@ -113,11 +113,11 @@ namespace HDRGammaController.Core
                         }
                         if (hr < 0)
                         {
-                            Console.WriteLine($"MonitorManager: EnumOutputs failed for {outputIndex} with HR={hr}");
+                            Log.Info($"MonitorManager: EnumOutputs failed for {outputIndex} with HR={hr}");
                             break;
                         }
 
-                        Console.WriteLine($"MonitorManager: Found output {outputIndex}");
+                        Log.Info($"MonitorManager: Found output {outputIndex}");
 
                         // QueryInterface for Output6 (HDR). Same RCW lifetime rule as adapters —
                         // if the cast fails we still own a refcount and must release it.
@@ -135,7 +135,7 @@ namespace HDRGammaController.Core
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine($"MonitorManager: Failed to get IDXGIOutput6 for output {outputIndex}: {ex.Message}");
+                            Log.Info($"MonitorManager: Failed to get IDXGIOutput6 for output {outputIndex}: {ex.Message}");
                             if (outObj != null) { try { Marshal.ReleaseComObject(outObj); } catch { } }
                         }
 
@@ -160,7 +160,7 @@ namespace HDRGammaController.Core
                         }
                         else
                         {
-                            Console.WriteLine($"MonitorManager: Output {outputIndex} does not support IDXGIOutput6.");
+                            Log.Info($"MonitorManager: Output {outputIndex} does not support IDXGIOutput6.");
                         }
 
                         if (pOutput != IntPtr.Zero)
@@ -203,7 +203,7 @@ namespace HDRGammaController.Core
                 if (!string.IsNullOrEmpty(edidName))
                 {
                     monitor.FriendlyName = edidName;
-                    Console.WriteLine($"MonitorManager: Got EDID name '{edidName}' for {monitor.DeviceName}");
+                    Log.Info($"MonitorManager: Got EDID name '{edidName}' for {monitor.DeviceName}");
                 }
                 else
                 {
@@ -274,7 +274,7 @@ namespace HDRGammaController.Core
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"MonitorManager: Error reading EDID: {ex.Message}");
+                Log.Info($"MonitorManager: Error reading EDID: {ex.Message}");
             }
             
             return null;
@@ -307,7 +307,7 @@ namespace HDRGammaController.Core
                 // We need to access offset+5 through offset+17 (13 bytes of name data)
                 if (offset + 18 > edid.Length)
                 {
-                    Console.WriteLine($"MonitorManager: EDID too short for descriptor at offset {offset}");
+                    Log.Info($"MonitorManager: EDID too short for descriptor at offset {offset}");
                     break;
                 }
 

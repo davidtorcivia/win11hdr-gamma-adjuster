@@ -1,4 +1,5 @@
 using System;
+using HDRGammaController.Core;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -40,7 +41,7 @@ namespace HDRGammaController.Services
                     var resourceName = FindResourceName(assembly, fileName);
                     if (resourceName == null)
                     {
-                        Console.WriteLine($"ResourceExtractor: Embedded resource not found for {fileName}");
+                        Log.Info($"ResourceExtractor: Embedded resource not found for {fileName}");
                         continue;
                     }
 
@@ -49,7 +50,7 @@ namespace HDRGammaController.Services
                     using var resourceStream = assembly.GetManifestResourceStream(resourceName);
                     if (resourceStream == null)
                     {
-                        Console.WriteLine($"ResourceExtractor: Failed to open resource stream for {resourceName}");
+                        Log.Info($"ResourceExtractor: Failed to open resource stream for {resourceName}");
                         continue;
                     }
 
@@ -66,11 +67,11 @@ namespace HDRGammaController.Services
                             // File exists and matches - no action needed
                             continue;
                         }
-                        Console.WriteLine($"ResourceExtractor: Updating {fileName} (hash mismatch)");
+                        Log.Info($"ResourceExtractor: Updating {fileName} (hash mismatch)");
                     }
                     else
                     {
-                        Console.WriteLine($"ResourceExtractor: Extracting {fileName} (not found)");
+                        Log.Info($"ResourceExtractor: Extracting {fileName} (not found)");
                     }
 
                     // Extract or update the file
@@ -79,7 +80,7 @@ namespace HDRGammaController.Services
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"ResourceExtractor: Error processing {fileName}: {ex.Message}");
+                    Log.Info($"ResourceExtractor: Error processing {fileName}: {ex.Message}");
                 }
             }
 
@@ -128,10 +129,10 @@ namespace HDRGammaController.Services
         {
             var assembly = Assembly.GetExecutingAssembly();
             var names = assembly.GetManifestResourceNames();
-            Console.WriteLine($"ResourceExtractor: Found {names.Length} embedded resources:");
+            Log.Info($"ResourceExtractor: Found {names.Length} embedded resources:");
             foreach (var name in names)
             {
-                Console.WriteLine($"  - {name}");
+                Log.Info($"  - {name}");
             }
         }
     }

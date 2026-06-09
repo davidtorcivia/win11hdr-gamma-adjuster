@@ -191,7 +191,7 @@ namespace HDRGammaController.Core
                     catch (Exception ex)
                     {
                         // Fallback: Try defining a legacy structure or just reset ExcludedApps
-                        Console.WriteLine($"SettingsManager: Primary deserialization failed ({ex.Message}), attempting legacy migration...");
+                        Log.Info($"SettingsManager: Primary deserialization failed ({ex.Message}), attempting legacy migration...");
                         try 
                         {
                             var legacy = JsonSerializer.Deserialize<LegacySettingsData>(json, options);
@@ -203,25 +203,25 @@ namespace HDRGammaController.Core
                                     NightMode = legacy.NightMode,
                                     ExcludedApps = legacy.ExcludedApps?.Select(path => new AppExclusionRule { AppName = path, FullDisable = false }).ToList() ?? new List<AppExclusionRule>()
                                 };
-                                Console.WriteLine("SettingsManager: Legacy migration successful.");
+                                Log.Info("SettingsManager: Legacy migration successful.");
                                 Save(); // Save immediately in new format
                             }
                         }
                         catch (Exception innerEx)
                         {
-                            Console.WriteLine($"SettingsManager: Legacy migration failed ({innerEx.Message}). Using defaults.");
+                            Log.Info($"SettingsManager: Legacy migration failed ({innerEx.Message}). Using defaults.");
                             // Backup corrupted file
                             try { File.Copy(SettingsFilePath, SettingsFilePath + $".bak-{DateTime.Now.Ticks}", true); } catch { }
                             _data = new SettingsData();
                         }
                     }
                     
-                    Console.WriteLine($"SettingsManager: Loaded {_data.MonitorProfiles.Count} monitor profiles.");
+                    Log.Info($"SettingsManager: Loaded {_data.MonitorProfiles.Count} monitor profiles.");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"SettingsManager: Failed to load settings: {ex.Message}");
+                Log.Info($"SettingsManager: Failed to load settings: {ex.Message}");
                 _data = new SettingsData();
             }
         }
@@ -241,11 +241,11 @@ namespace HDRGammaController.Core
                 string tempPath = SettingsFilePath + ".tmp";
                 File.WriteAllText(tempPath, json);
                 File.Move(tempPath, SettingsFilePath, overwrite: true);
-                Console.WriteLine($"SettingsManager: Saved {_data.MonitorProfiles.Count} monitor profiles.");
+                Log.Info($"SettingsManager: Saved {_data.MonitorProfiles.Count} monitor profiles.");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"SettingsManager: Failed to save settings: {ex.Message}");
+                Log.Info($"SettingsManager: Failed to save settings: {ex.Message}");
             }
         }
 
@@ -285,10 +285,10 @@ namespace HDRGammaController.Core
             if (string.IsNullOrEmpty(monitorDevicePath)) return;
             if (profile == null)
             {
-                Console.WriteLine($"SettingsManager.SetMonitorProfile: WARNING - Null profile for {monitorDevicePath}, skipping save");
+                Log.Info($"SettingsManager.SetMonitorProfile: WARNING - Null profile for {monitorDevicePath}, skipping save");
                 return;
             }
-            Console.WriteLine($"SettingsManager.SetMonitorProfile: Saving {monitorDevicePath} - Brightness={profile.Brightness}, Gamma={profile.GammaMode}");
+            Log.Info($"SettingsManager.SetMonitorProfile: Saving {monitorDevicePath} - Brightness={profile.Brightness}, Gamma={profile.GammaMode}");
             _data.MonitorProfiles[monitorDevicePath] = profile;
             Save();
         }
@@ -322,7 +322,7 @@ namespace HDRGammaController.Core
             Directory.CreateDirectory(CalibrationProfilesPath);
             string filePath = Path.Combine(CalibrationProfilesPath, $"{profile.Id}.json");
             profile.SaveToFile(filePath);
-            Console.WriteLine($"SettingsManager: Saved calibration profile '{profile.Name}' to {filePath}");
+            Log.Info($"SettingsManager: Saved calibration profile '{profile.Name}' to {filePath}");
         }
 
         /// <summary>
@@ -335,12 +335,12 @@ namespace HDRGammaController.Core
             string filePath = Path.Combine(CalibrationProfilesPath, $"{profileId}.json");
             if (!File.Exists(filePath))
             {
-                Console.WriteLine($"SettingsManager: Calibration profile not found: {filePath}");
+                Log.Info($"SettingsManager: Calibration profile not found: {filePath}");
                 return null;
             }
 
             var profile = DisplayCalibrationProfile.LoadFromFile(filePath);
-            Console.WriteLine($"SettingsManager: Loaded calibration profile '{profile?.Name}' from {filePath}");
+            Log.Info($"SettingsManager: Loaded calibration profile '{profile?.Name}' from {filePath}");
             return profile;
         }
 
@@ -364,7 +364,7 @@ namespace HDRGammaController.Core
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"SettingsManager: Failed to load profile from {file}: {ex.Message}");
+                    Log.Info($"SettingsManager: Failed to load profile from {file}: {ex.Message}");
                 }
             }
 
@@ -395,12 +395,12 @@ namespace HDRGammaController.Core
             try
             {
                 File.Delete(filePath);
-                Console.WriteLine($"SettingsManager: Deleted calibration profile: {filePath}");
+                Log.Info($"SettingsManager: Deleted calibration profile: {filePath}");
                 return true;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"SettingsManager: Failed to delete profile {profileId}: {ex.Message}");
+                Log.Info($"SettingsManager: Failed to delete profile {profileId}: {ex.Message}");
                 return false;
             }
         }
@@ -430,7 +430,7 @@ namespace HDRGammaController.Core
 
             monitorProfile.CalibrationProfileId = profileId;
             SetMonitorProfile(monitorDevicePath, monitorProfile);
-            Console.WriteLine($"SettingsManager: Set active calibration profile for {monitorDevicePath} to {profileId ?? "none"}");
+            Log.Info($"SettingsManager: Set active calibration profile for {monitorDevicePath} to {profileId ?? "none"}");
         }
 
         #endregion

@@ -97,19 +97,19 @@ namespace HDRGammaController
         
         private void LoadMonitorProfile(MonitorInfo monitor)
         {
-            Console.WriteLine($"LoadMonitorProfile: Loading for {monitor.MonitorDevicePath?.Substring(0, Math.Min(30, monitor.MonitorDevicePath?.Length ?? 0))}...");
+            Log.Info($"LoadMonitorProfile: Loading for {monitor.MonitorDevicePath?.Substring(0, Math.Min(30, monitor.MonitorDevicePath?.Length ?? 0))}...");
             
             // Load saved profile from settings (for compare feature)
             _savedProfile = _settingsManager.GetMonitorProfile(monitor.MonitorDevicePath)?.Clone();
             if (_savedProfile == null)
             {
-                Console.WriteLine($"LoadMonitorProfile: No saved profile found, using defaults");
+                Log.Info($"LoadMonitorProfile: No saved profile found, using defaults");
                 // Default to monitor's current state
                 _savedProfile = new MonitorProfileData { GammaMode = monitor.CurrentGamma };
             }
             else
             {
-                Console.WriteLine($"LoadMonitorProfile: Saved profile found - Brightness={_savedProfile.Brightness}");
+                Log.Info($"LoadMonitorProfile: Saved profile found - Brightness={_savedProfile.Brightness}");
             }
             
             // Check pending changes first, then settings file, then monitor's current state
@@ -117,7 +117,7 @@ namespace HDRGammaController
                 _pendingChanges.TryGetValue(monitor.MonitorDevicePath, out var pending))
             {
                 _currentProfile = pending;
-                Console.WriteLine($"LoadMonitorProfile: Using pending changes - Brightness={pending.Brightness}");
+                Log.Info($"LoadMonitorProfile: Using pending changes - Brightness={pending.Brightness}");
             }
             else
             {
@@ -125,11 +125,11 @@ namespace HDRGammaController
                 if (saved != null)
                 {
                     _currentProfile = saved;
-                    Console.WriteLine($"LoadMonitorProfile: Using saved profile - Brightness={saved.Brightness}");
+                    Log.Info($"LoadMonitorProfile: Using saved profile - Brightness={saved.Brightness}");
                 }
                 else
                 {
-                    Console.WriteLine($"LoadMonitorProfile: No saved, using defaults");
+                    Log.Info($"LoadMonitorProfile: No saved, using defaults");
                     // Use monitor's current gamma mode as default
                     _currentProfile = new MonitorProfileData { GammaMode = monitor.CurrentGamma };
                 }
@@ -363,7 +363,7 @@ namespace HDRGammaController
             _currentProfile.GreenGain = GreenGainSlider.Value;
             _currentProfile.BlueGain = BlueGainSlider.Value;
             
-            Console.WriteLine($"UpdateProfileFromUI: Brightness={_currentProfile.Brightness}, Temp={_currentProfile.Temperature}, Tint={_currentProfile.Tint}");
+            Log.Info($"UpdateProfileFromUI: Brightness={_currentProfile.Brightness}, Temp={_currentProfile.Temperature}, Tint={_currentProfile.Tint}");
         }
         
         private void SaveAndClose_Click(object sender, RoutedEventArgs e)

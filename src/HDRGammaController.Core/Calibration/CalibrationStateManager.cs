@@ -75,11 +75,11 @@ namespace HDRGammaController.Core.Calibration
             try
             {
                 _dispwinRunner.ClearGamma(monitor);
-                Console.WriteLine($"CalibrationStateManager: Entered bypass mode for {monitor.FriendlyName ?? devicePath}");
+                Log.Info($"CalibrationStateManager: Entered bypass mode for {monitor.FriendlyName ?? devicePath}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"CalibrationStateManager: Failed to clear gamma: {ex.Message}");
+                Log.Info($"CalibrationStateManager: Failed to clear gamma: {ex.Message}");
                 throw;
             }
 
@@ -107,16 +107,16 @@ namespace HDRGammaController.Core.Calibration
                             state.Monitor.SdrWhiteLevel,
                             state.CalibrationSettings ?? CalibrationSettings.Default);
 
-                        Console.WriteLine($"CalibrationStateManager: Restored previous state for {state.Monitor.FriendlyName}");
+                        Log.Info($"CalibrationStateManager: Restored previous state for {state.Monitor.FriendlyName}");
                     }
                     else
                     {
-                        Console.WriteLine($"CalibrationStateManager: Monitor {state.Monitor.FriendlyName} was at defaults, no restore needed");
+                        Log.Info($"CalibrationStateManager: Monitor {state.Monitor.FriendlyName} was at defaults, no restore needed");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"CalibrationStateManager: Failed to restore state for {state.Monitor.FriendlyName}: {ex.Message}");
+                    Log.Info($"CalibrationStateManager: Failed to restore state for {state.Monitor.FriendlyName}: {ex.Message}");
                 }
             }
 
@@ -146,14 +146,14 @@ namespace HDRGammaController.Core.Calibration
                 // 2. Use a custom shader pipeline
                 // 3. Integrate with Windows color management
 
-                Console.WriteLine($"CalibrationStateManager: Applied calibration-only mode for {monitor.FriendlyName}");
-                Console.WriteLine("Note: 3D LUT application requires integration with display color management.");
+                Log.Info($"CalibrationStateManager: Applied calibration-only mode for {monitor.FriendlyName}");
+                Log.Info("Note: 3D LUT application requires integration with display color management.");
 
                 // Keep night mode paused - pure calibration view
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"CalibrationStateManager: Failed to apply calibration: {ex.Message}");
+                Log.Info($"CalibrationStateManager: Failed to apply calibration: {ex.Message}");
             }
         }
 
@@ -170,7 +170,7 @@ namespace HDRGammaController.Core.Calibration
             var devicePath = monitor.MonitorDevicePath ?? monitor.DeviceName ?? "unknown";
             if (!_savedStates.TryGetValue(devicePath, out var state))
             {
-                Console.WriteLine($"CalibrationStateManager: No saved state for {devicePath}");
+                Log.Info($"CalibrationStateManager: No saved state for {devicePath}");
                 return;
             }
 
@@ -184,14 +184,14 @@ namespace HDRGammaController.Core.Calibration
                     monitor.SdrWhiteLevel,
                     state.CalibrationSettings ?? CalibrationSettings.Default);
 
-                Console.WriteLine($"CalibrationStateManager: Applied calibration with previous settings for {monitor.FriendlyName}");
+                Log.Info($"CalibrationStateManager: Applied calibration with previous settings for {monitor.FriendlyName}");
 
                 // Resume night mode so user can see the full effect
                 ResumeNightMode();
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"CalibrationStateManager: Failed to apply with previous settings: {ex.Message}");
+                Log.Info($"CalibrationStateManager: Failed to apply with previous settings: {ex.Message}");
             }
         }
 

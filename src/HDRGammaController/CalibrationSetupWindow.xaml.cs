@@ -80,7 +80,7 @@ namespace HDRGammaController
                 if (ArgyllDownloader.IsInstalled())
                 {
                     argyllBinPath = ArgyllDownloader.LocalArgyllBinDir;
-                    Console.WriteLine($"CalibrationSetupWindow: Using our downloaded ArgyllCMS from {argyllBinPath}");
+                    Log.Info($"CalibrationSetupWindow: Using our downloaded ArgyllCMS from {argyllBinPath}");
                 }
                 else
                 {
@@ -99,7 +99,7 @@ namespace HDRGammaController
                         if (IsOldVersion(versionInfo))
                         {
                             // Old version found - offer to download newer
-                            Console.WriteLine($"CalibrationSetupWindow: Found old ArgyllCMS version: {versionInfo}");
+                            Log.Info($"CalibrationSetupWindow: Found old ArgyllCMS version: {versionInfo}");
                             await OfferArgyllDownloadAsync(
                                 $"Found ArgyllCMS {versionInfo}, but a newer version ({ArgyllDownloader.ArgyllVersion}) is recommended for better compatibility.");
                         }
@@ -130,7 +130,7 @@ namespace HDRGammaController
                 StatusText.Text = "Searching for colorimeter...";
                 string binDirName = Path.GetFileName(Path.GetDirectoryName(argyllBinPath) ?? argyllBinPath);
                 ColorimeterModelText.Text = $"Using: {binDirName}";
-                Console.WriteLine($"CalibrationSetupWindow: Using ArgyllCMS from {argyllBinPath}");
+                Log.Info($"CalibrationSetupWindow: Using ArgyllCMS from {argyllBinPath}");
 
                 _colorimeterService = new ColorimeterService(argyllBinPath);
 
@@ -156,7 +156,7 @@ namespace HDRGammaController
                 StatusText.Text = $"Error: {ex.Message}";
                 StatusIndicator.Fill = new SolidColorBrush(Color.FromRgb(239, 68, 68)); // Red
                 ColorimeterModelText.Text = "Check console for details";
-                Console.WriteLine($"Colorimeter initialization error: {ex}");
+                Log.Info($"Colorimeter initialization error: {ex}");
                 StartButton.IsEnabled = false;
             }
         }
@@ -217,7 +217,7 @@ namespace HDRGammaController
             else if (dialogResult == false)
             {
                 // User cancelled or download failed - status will be updated by caller
-                Console.WriteLine("ArgyllCMS download was cancelled or failed");
+                Log.Info("ArgyllCMS download was cancelled or failed");
             }
         }
 
@@ -290,11 +290,11 @@ namespace HDRGammaController
             else
             {
                 // Fallback: try to get first monitor if selection failed
-                Console.WriteLine($"MonitorComboBox.SelectedItem type: {MonitorComboBox.SelectedItem?.GetType().Name ?? "null"}");
+                Log.Info($"MonitorComboBox.SelectedItem type: {MonitorComboBox.SelectedItem?.GetType().Name ?? "null"}");
                 if (_monitors.Count > 0)
                 {
                     SelectedMonitor = _monitors[0];
-                    Console.WriteLine($"Falling back to first monitor: {SelectedMonitor.FriendlyName}");
+                    Log.Info($"Falling back to first monitor: {SelectedMonitor.FriendlyName}");
                 }
             }
 
@@ -308,7 +308,7 @@ namespace HDRGammaController
             SelectedDisplayType = GetSelectedDisplayType();
             _colorimeterService?.SetDisplayType(SelectedDisplayType);
 
-            Console.WriteLine($"Start_Click: Monitor={SelectedMonitor?.FriendlyName ?? "null"}, Target={SelectedTarget?.Name ?? "null"}, DisplayType={SelectedDisplayType}, Colorimeter={(_colorimeterService != null ? "present" : "null")}");
+            Log.Info($"Start_Click: Monitor={SelectedMonitor?.FriendlyName ?? "null"}, Target={SelectedTarget?.Name ?? "null"}, DisplayType={SelectedDisplayType}, Colorimeter={(_colorimeterService != null ? "present" : "null")}");
 
             DialogResult = true;
             Close();

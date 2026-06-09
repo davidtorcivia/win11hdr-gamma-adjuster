@@ -16,27 +16,22 @@ namespace HDRGammaController.ViewModels
 {
     public class TrayViewModel : IDisposable
     {
-        // Per-monitor coalescer: rapid slider drags collapse to one dispwin call per
-        // completed invocation instead of queueing a backlog. See LatestValueCoalescer
-        // for the concurrency contract and its tests for the proof.
-        private readonly LatestValueCoalescer<IntPtr, (MonitorInfo Monitor, GammaMode Mode, CalibrationSettings Calibration, double WhiteLevel)> _applyCoalescer;
         public event Action<string, string>? NotificationRequested;
-        
+
         private readonly MonitorManager _monitorManager;
         private readonly ProfileManager _profileManager;
         private readonly DispwinRunner _dispwinRunner;
         private readonly SettingsManager _settingsManager;
         private readonly HotkeyManager? _hotkeyManager;
         private readonly NightModeService _nightModeService;
+        private readonly GammaApplyService _applyService;
         private readonly UpdateService _updateService;
-        
+
         private readonly Dictionary<int, Action<MonitorInfo>> _hotkeyActions = new Dictionary<int, Action<MonitorInfo>>();
         private int _panicId = -1;
         private int _nightModeToggleId = -1;
-        private bool _nightModeManuallyDisabled = false;
-        
+
         private readonly AppDetectionService _appDetectionService;
-        private HashSet<IntPtr> _blockedMonitors = new HashSet<IntPtr>();
         private List<MonitorInfo> _activeMonitors = new List<MonitorInfo>();
 
         private Dictionary<string, MonitorInfo> _savedConfigs = new Dictionary<string, MonitorInfo>();
@@ -51,28 +46,12 @@ namespace HDRGammaController.ViewModels
 
         public TrayViewModel(HotkeyManager? hotkeyManager = null)
         {
+            // Construct everything before starting any service: NightModeService and
+            // AppDetectionService both fire their events synchronously from Start(),
+            // and those handlers reach the apply service.
             _monitorManager = new MonitorManager();
             _settingsManager = new SettingsManager();
-            
-            // Initialize Night Mode Service
             _nightModeService = new NightModeService(_settingsManager.NightMode);
-            _nightModeService.BlendChanged += (blend) => 
-            {
-                // Dispatch to UI thread if needed (though ApplyAll primarily runs dispwin which is blocking/background)
-                // WPF Observables need UI thread, but ApplyAll primarily affects hardware. 
-                // However, TrayItems might update. Better invoke.
-                Application.Current.Dispatcher.Invoke(() => ApplyAll());
-            };
-            
-            _settingsManager.NightModeChanged += (newSettings) => _nightModeService.UpdateSettings(newSettings);
-            
-            // Start service
-            _nightModeService.Start();
-            
-            // App Detection
-            _appDetectionService = new AppDetectionService();
-            _appDetectionService.ForegroundAppChanged += OnForegroundAppChanged;
-            _appDetectionService.Start();
 
             // Assumes template is in the same directory (needs to be sourced by user)
             string profileTemplatePath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "srgb_to_gamma2p2_100_mhc2.icm");
@@ -80,18 +59,18 @@ namespace HDRGammaController.ViewModels
             _dispwinRunner = new DispwinRunner(); // Auto-detects
             _hotkeyManager = hotkeyManager;
 
-            _applyCoalescer = new LatestValueCoalescer<IntPtr, (MonitorInfo, GammaMode, CalibrationSettings, double)>(
-                (_, item) =>
-                {
-                    try
-                    {
-                        _dispwinRunner.ApplyGamma(item.Item1, item.Item2, item.Item4, item.Item3);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"RequestApply error ({item.Item1.FriendlyName}): {ex.Message}");
-                    }
-                });
+            _applyService = new GammaApplyService(_dispwinRunner, _settingsManager, _nightModeService);
+
+            _nightModeService.BlendChanged += (blend) =>
+            {
+                // The hardware apply is thread-agnostic, but ApplyAll reads TrayItems,
+                // which belongs to the UI thread.
+                Application.Current.Dispatcher.Invoke(() => ApplyAll());
+            };
+            _settingsManager.NightModeChanged += (newSettings) => _nightModeService.UpdateSettings(newSettings);
+
+            _appDetectionService = new AppDetectionService();
+            _appDetectionService.ForegroundAppChanged += OnForegroundAppChanged;
 
             ExitCommand = new RelayCommand(_ => Application.Current.Shutdown());
             RefreshCommand = new RelayCommand(_ => RefreshMonitors());
@@ -100,16 +79,19 @@ namespace HDRGammaController.ViewModels
             CalibrateCommand = new RelayCommand(_ => OpenCalibration());
 
             RefreshMonitors();
-            
+
+            _nightModeService.Start();
+            _appDetectionService.Start();
+
             // Apply saved profiles on startup
             ApplyAll();
-            
+
             if (_hotkeyManager != null)
             {
                 RegisterHotkeys();
                 _hotkeyManager.HotkeyPressed += OnHotkeyPressed;
             }
-            
+
             _updateService = new UpdateService();
             CheckForUpdates();
         }
@@ -128,7 +110,7 @@ namespace HDRGammaController.ViewModels
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"TrayViewModel.CheckForUpdates: {ex.Message}");
+                Log.Error($"TrayViewModel.CheckForUpdates: {ex.Message}");
             }
         }
         
@@ -166,7 +148,7 @@ namespace HDRGammaController.ViewModels
             if (id == _nightModeToggleId)
             {
                 // Toggle night mode on/off
-                _nightModeManuallyDisabled = !_nightModeManuallyDisabled;
+                _applyService.NightModeManuallyDisabled = !_applyService.NightModeManuallyDisabled;
                 ApplyAll(); // Re-apply all calibrations with night mode toggled
                 return;
             }
@@ -218,13 +200,13 @@ namespace HDRGammaController.ViewModels
             {
                 // Windows may have reset the gamma ramps; don't let the identical-LUT
                 // dedupe skip the re-apply.
-                _dispwinRunner.InvalidateAppliedState();
+                _applyService.InvalidateAppliedState();
                 RefreshMonitors();
                 ApplyAll();
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"TrayViewModel.HandleDisplayEvent: {ex.Message}");
+                Log.Error($"TrayViewModel.HandleDisplayEvent: {ex.Message}");
             }
         }
 
@@ -266,17 +248,16 @@ namespace HDRGammaController.ViewModels
                     }
                 }
                 
-                // Diff check to avoid spamming updates
-                if (!_blockedMonitors.SetEquals(newBlocked))
+                // Diff check (in the service) avoids spamming updates
+                if (_applyService.UpdateBlockedMonitors(newBlocked))
                 {
-                    _blockedMonitors = newBlocked;
-                    Console.WriteLine($"TrayViewModel: Block state changed. App={appName}, Blocked Count={_blockedMonitors.Count}");
+                    Log.Info($"TrayViewModel: Block state changed. App={appName}, Blocked Count={newBlocked.Count}");
                     Application.Current.Dispatcher.Invoke(() => ApplyAll());
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error in OnForegroundAppChanged: {ex.Message}");
+                Log.Error($"Error in OnForegroundAppChanged: {ex.Message}");
             }
         }
 
@@ -289,85 +270,14 @@ namespace HDRGammaController.ViewModels
         }
         
         public void RequestApply(MonitorInfo monitor, GammaMode mode, CalibrationSettings? manualCalibration = null, int? nightKelvinOverride = null)
-        {
-            // Resolve the effective calibration synchronously on the caller's thread. This
-            // keeps us reading fresh state (settings, night mode, exclusions) right at the
-            // moment of the request, even if the actual apply is delayed by coalescing.
-            int currentKelvin = nightKelvinOverride ?? _nightModeService.CurrentNightKelvin;
-            if (_nightModeManuallyDisabled) currentKelvin = 6500;
-            if (_blockedMonitors.Contains(monitor.HMonitor)) currentKelvin = 6500;
-
-            bool nightModeActive = nightKelvinOverride.HasValue || currentKelvin < 6450;
-
-            CalibrationSettings calibration;
-            if (manualCalibration != null)
-            {
-                // Clone so later night-mode / offset mutations don't leak back into the caller's object.
-                calibration = manualCalibration.Clone();
-            }
-            else
-            {
-                var profile = _settingsManager.GetMonitorProfile(monitor.MonitorDevicePath) ?? new MonitorProfileData();
-                calibration = profile.ToCalibrationSettings();
-            }
-
-            calibration.Temperature += calibration.TemperatureOffset;
-
-            if (nightModeActive)
-            {
-                double nightShift = (currentKelvin - 6500) / 70.0;
-                calibration.Temperature += nightShift;
-                calibration.Algorithm = _settingsManager.NightMode.Algorithm;
-                calibration.UseUltraWarmMode = _settingsManager.NightMode.UseUltraWarmMode;
-            }
-
-            // Extended range: -65.7 → 1900K, +50 → 10000K. See CalibrationSettings.Temperature
-            // for why this goes past the slider's nominal -50..+50.
-            calibration.Temperature = Math.Clamp(calibration.Temperature, -65.7, 50.0);
-
-            // Update persistent state only for real (non-preview) applies.
-            if (manualCalibration == null)
-            {
-                monitor.CurrentGamma = mode;
-                if (!string.IsNullOrEmpty(monitor.MonitorDevicePath))
-                {
-                    _settingsManager.SetProfileForMonitor(monitor.MonitorDevicePath, mode);
-                }
-            }
-
-            _applyCoalescer.Submit(monitor.HMonitor, (monitor, mode, calibration, monitor.SdrWhiteLevel));
-        }
+            => _applyService.RequestApply(monitor, mode, manualCalibration, nightKelvinOverride);
 
         private void ApplyAll()
-        {
-            int currentKelvin = _nightModeService.CurrentNightKelvin;
-            if (_nightModeManuallyDisabled) currentKelvin = 6500;
-            bool nightModeActive = currentKelvin < 6450;
-
-            foreach(var item in TrayItems)
-            {
-                if (item is MonitorViewModel vm)
-                {
-                    // Get saved mode
-                    var profile = _settingsManager.GetMonitorProfile(vm.Model.MonitorDevicePath);
-                    var mode = profile?.GammaMode ?? vm.Model.CurrentGamma;
-                    
-                    if (mode == GammaMode.WindowsDefault && !nightModeActive) continue;
-                    
-                    RequestApply(vm.Model, mode);
-                }
-            }
-        }
+            => _applyService.ApplyAll(TrayItems.OfType<MonitorViewModel>().Select(vm => vm.Model));
 
         private void PanicAll()
         {
-            foreach(var item in TrayItems)
-            {
-                if (item is MonitorViewModel vm)
-                {
-                     try { _dispwinRunner.ClearGamma(vm.Model); } catch {}
-                }
-            }
+            _applyService.ClearAll(TrayItems.OfType<MonitorViewModel>().Select(vm => vm.Model));
             MessageBox.Show("Panic Mode Activated: All gamma tables cleared.", "HDR Gamma Controller", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
@@ -442,11 +352,11 @@ namespace HDRGammaController.ViewModels
 
         public void RefreshMonitors()
         {
-            Console.WriteLine("TrayViewModel: Refreshing monitors...");
+            Log.Info("TrayViewModel: Refreshing monitors...");
             TrayItems.Clear();
             _activeMonitors = _monitorManager.EnumerateMonitors();
             var monitors = _activeMonitors;
-            Console.WriteLine($"TrayViewModel: Enumerated {monitors.Count} monitors.");
+            Log.Info($"TrayViewModel: Enumerated {monitors.Count} monitors.");
             
             if (monitors.Count == 0)
             {

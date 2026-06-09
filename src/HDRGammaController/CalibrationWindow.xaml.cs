@@ -215,11 +215,11 @@ namespace HDRGammaController
                 try
                 {
                     _stateManager.RestorePreviousState();
-                    Console.WriteLine("CalibrationWindow: Restored previous correction state on close");
+                    Log.Info("CalibrationWindow: Restored previous correction state on close");
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"CalibrationWindow: Failed to restore state: {ex.Message}");
+                    Log.Info($"CalibrationWindow: Failed to restore state: {ex.Message}");
                 }
             }
 
@@ -529,7 +529,7 @@ namespace HDRGammaController
                 {
                     _stateManager.EnterBypassMode(_targetMonitor, _previousGammaMode, _previousSettings);
                     _bypassApplied = true;
-                    Console.WriteLine("CalibrationWindow: Entered bypass mode - all corrections disabled");
+                    Log.Info("CalibrationWindow: Entered bypass mode - all corrections disabled");
                 }
                 catch (Exception ex)
                 {
@@ -1041,11 +1041,11 @@ namespace HDRGammaController
                     try
                     {
                         _stateManager.RestorePreviousState();
-                        Console.WriteLine("CalibrationWindow: Restored previous state after failure");
+                        Log.Info("CalibrationWindow: Restored previous state after failure");
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"CalibrationWindow: Failed to restore state: {ex.Message}");
+                        Log.Info($"CalibrationWindow: Failed to restore state: {ex.Message}");
                     }
                 }
             }
@@ -1064,18 +1064,18 @@ namespace HDRGammaController
                 {
                     // Apply calibration LUT only (no additional corrections)
                     _stateManager.ApplyCalibrationOnly(_targetMonitor, _generatedLut);
-                    Console.WriteLine("CalibrationWindow: Switched to calibration-only view");
+                    Log.Info("CalibrationWindow: Switched to calibration-only view");
                 }
                 else if (ViewWithPreviousSettingsRadio.IsChecked == true)
                 {
                     // Apply calibration with previous gamma/night mode settings
                     _stateManager.ApplyCalibrationWithPreviousSettings(_targetMonitor, _generatedLut);
-                    Console.WriteLine("CalibrationWindow: Switched to calibration + previous settings view");
+                    Log.Info("CalibrationWindow: Switched to calibration + previous settings view");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"CalibrationWindow: Failed to change display mode: {ex.Message}");
+                Log.Info($"CalibrationWindow: Failed to change display mode: {ex.Message}");
             }
         }
 
@@ -1132,12 +1132,12 @@ namespace HDRGammaController
                 {
                     _stateManager.RestorePreviousState();
                     _bypassApplied = false;
-                    Console.WriteLine("CalibrationWindow: Restored previous state before driver dialog");
+                    Log.Info("CalibrationWindow: Restored previous state before driver dialog");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"CalibrationWindow: Failed to restore state: {ex.Message}");
+                Log.Info($"CalibrationWindow: Failed to restore state: {ex.Message}");
             }
 
             // Show the driver installation dialog
@@ -1151,7 +1151,7 @@ namespace HDRGammaController
             if (dialog.ShouldRetry && dialog.DriverInstalled)
             {
                 // User wants to retry - restart calibration
-                Console.WriteLine("CalibrationWindow: User requested retry after driver installation");
+                Log.Info("CalibrationWindow: User requested retry after driver installation");
 
                 if (_colorimeterService != null)
                 {
@@ -1163,7 +1163,7 @@ namespace HDRGammaController
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"CalibrationWindow: Colorimeter re-init failed after driver install: {ex.Message}");
+                        Log.Info($"CalibrationWindow: Colorimeter re-init failed after driver install: {ex.Message}");
                     }
                 }
 
