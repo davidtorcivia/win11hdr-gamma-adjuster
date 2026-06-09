@@ -6,9 +6,6 @@ namespace HDRGammaController.Core
     /// <summary>
     /// Color adjustment functions for temperature, tint, dimming, and RGB corrections.
     /// </summary>
-    /// <summary>
-    /// Color adjustment functions for temperature, tint, dimming, and RGB corrections.
-    /// </summary>
     public static class ColorAdjustments
     {
         /// <summary>
@@ -46,12 +43,14 @@ namespace HDRGammaController.Core
         /// blend so highlights follow the brightness slider instead of snapping back to passthrough.
         /// </summary>
         /// <remarks>
-        /// The SDR path normalizes to [0,1] before dimming and rescales. For headroom we can't
-        /// assume a [0,1] range (highlights can be 10,000 nits), so we apply the same
-        /// power+scale in the nit domain normalized against the PQ ceiling. This keeps the
-        /// headroom curve monotonic and C⁰/C¹ continuous with the SDR portion at the boundary.
+        /// Anchored at the SDR white level so the headroom curve meets the SDR portion of
+        /// the LUT exactly: at nits == sdrWhiteLevel this returns
+        /// ApplyDimming(1.0) * sdrWhiteLevel. The previous version normalized against the
+        /// 10,000-nit PQ ceiling instead, which made the headroom target start ~1.7× brighter
+        /// than the dimmed SDR white at 50% brightness — a visible shelf at the boundary.
+        /// Above white the same power curve keeps the rolloff monotonic.
         /// </remarks>
-        public static double ApplyDimmingNits(double nits, double brightnessPercent, bool linear = false)
+        public static double ApplyDimmingNits(double nits, double brightnessPercent, double sdrWhiteLevel, bool linear = false)
         {
             if (brightnessPercent >= 100.0) return nits;
             if (brightnessPercent <= 0) return 0;
@@ -63,13 +62,10 @@ namespace HDRGammaController.Core
                 return nits * brightness;
             }
 
-            // Normalize against PQ ceiling to use the same shape function as ApplyDimming,
-            // then rescale. 10,000 nits is the PQ ceiling per SMPTE ST 2084.
-            const double PqCeiling = 10000.0;
-            double normalized = Math.Clamp(nits / PqCeiling, 0.0, 1.0);
+            double white = Math.Max(sdrWhiteLevel, 1.0);
+            double ratio = Math.Max(nits, 0.0) / white;
             double gammaBoost = 1.0 + (1.0 - brightness) * 0.3;
-            double dimmed = Math.Pow(normalized, 1.0 / gammaBoost) * brightness;
-            return dimmed * PqCeiling;
+            return Math.Pow(ratio, 1.0 / gammaBoost) * brightness * white;
         }
         
         /// <summary>
@@ -291,22 +287,14 @@ namespace HDRGammaController.Core
                 b = ApplyDimming(b, settings.Brightness, settings.UseLinearBrightness);
             }
             
-            // 2. Apply temperature (using selected algorithm)
-            if (Math.Abs(settings.Temperature) > 0.01 || settings.Algorithm != NightModeAlgorithm.Standard)
+            // 2. Apply temperature. All algorithms return (1,1,1) at 6500K (temperature 0),
+            // so skipping when there's no shift is safe regardless of algorithm.
+            if (Math.Abs(settings.Temperature) > 0.01)
             {
-                // Even if temperature is 0, if non-standard algorithm is selected, we might want to apply?
-                // Actually, if temp is 0 (6500K), all algorithms should return 1,1,1.
-                // So checking Abs(Temperature) > 0.01 is still a valid optimization.
-                // Except "BlueReduction" at 6500K is 1,1,1.
-                // So optimization holds.
-                 
-                if (Math.Abs(settings.Temperature) > 0.01)
-                {
-                    var temp = GetTemperatureMultipliers(settings.Temperature, settings.Algorithm, settings.UseUltraWarmMode);
-                    r *= temp.R;
-                    g *= temp.G;
-                    b *= temp.B;
-                }
+                var temp = GetTemperatureMultipliers(settings.Temperature, settings.Algorithm, settings.UseUltraWarmMode);
+                r *= temp.R;
+                g *= temp.G;
+                b *= temp.B;
             }
             
             // 3. Apply tint

@@ -218,7 +218,7 @@ namespace HDRGammaController.Core
                     // HDR highlights (no re-gamma, no temperature tint on a 2000-nit
                     // specular) while still honoring the brightness slider — so a
                     // user dimming the screen sees highlights come down too.
-                    double headroomSignal = ComputeHeadroomTarget(linear, calibration);
+                    double headroomSignal = ComputeHeadroomTarget(linear, calibration, sdrWhiteLevel);
 
                     // Blend in PQ-signal space (perceptually uniform) with a smoothstep
                     // for C¹ continuity at the SDR/HDR boundary, eliminating the visible
@@ -243,7 +243,7 @@ namespace HDRGammaController.Core
         /// dimming the screen leaves HDR highlights at full brightness, which the user
         /// experiences as specular bloom punching through a dimmed UI.
         /// </summary>
-        private static double ComputeHeadroomTarget(double linearNits, CalibrationSettings calibration)
+        private static double ComputeHeadroomTarget(double linearNits, CalibrationSettings calibration, double sdrWhiteLevel)
         {
             if (calibration.Brightness >= 100.0)
             {
@@ -254,7 +254,7 @@ namespace HDRGammaController.Core
             }
 
             double dimmed = ColorAdjustments.ApplyDimmingNits(
-                linearNits, calibration.Brightness, calibration.UseLinearBrightness);
+                linearNits, calibration.Brightness, sdrWhiteLevel, calibration.UseLinearBrightness);
             return TransferFunctions.PqInverseEotf(dimmed);
         }
 
@@ -396,7 +396,7 @@ namespace HDRGammaController.Core
                 {
                     // Headroom: blend toward a dim-aware passthrough in PQ-signal space
                     // with a smoothstep. See GenerateLutInternal for rationale.
-                    double headroomSignal = ComputeHeadroomTarget(linear, calibration);
+                    double headroomSignal = ComputeHeadroomTarget(linear, calibration, sdrWhiteLevel);
 
                     double t = (normalized - pqSdrWhite) / Math.Max(1.0 - pqSdrWhite, 1e-9);
                     t = Math.Clamp(t, 0.0, 1.0);
