@@ -84,19 +84,25 @@ namespace HDRGammaController.Core.Calibration
             yield return @"C:\Argyll\bin";
 
             // Version-specific paths (common installation patterns)
+            yield return @"C:\Program Files\Argyll_V3.5.0\bin";
             yield return @"C:\Program Files\Argyll_V3.3.0\bin";
             yield return @"C:\Program Files\Argyll_V3.2.0\bin";
             yield return @"C:\Program Files\Argyll_V3.1.0\bin";
+            yield return @"C:\Program Files (x86)\Argyll_V3.5.0\bin";
             yield return @"C:\Program Files (x86)\Argyll_V3.3.0\bin";
 
             // DisplayCAL's bundled Argyll in Program Files
             yield return @"C:\Program Files\DisplayCAL\Argyll\bin";
             yield return @"C:\Program Files (x86)\DisplayCAL\Argyll\bin";
 
-            // DisplayCAL's roaming app data download location
-            yield return Path.Combine(
+            // DisplayCAL's roaming app data download location. The wildcard search in
+            // SearchDisplayCalArgyll() (priority 5) covers arbitrary versions; this is
+            // just a fast direct hit for the common ones.
+            string dcDl = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "DisplayCAL", "dl", "Argyll_V3.3.0", "bin");
+                "DisplayCAL", "dl");
+            yield return Path.Combine(dcDl, "Argyll_V3.5.0", "bin");
+            yield return Path.Combine(dcDl, "Argyll_V3.3.0", "bin");
         }
 
         /// <summary>

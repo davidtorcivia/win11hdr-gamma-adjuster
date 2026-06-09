@@ -200,6 +200,7 @@ namespace HDRGammaController.Core
             {
                 @"C:\Program Files\ArgyllCMS\bin\dispwin.exe",
                 @"C:\Program Files (x86)\ArgyllCMS\bin\dispwin.exe",
+                @"C:\Program Files\Argyll_V3.5.0\bin\dispwin.exe",
                 @"C:\Program Files\Argyll_V3.3.0\bin\dispwin.exe",
                 @"C:\Program Files\DisplayCAL\Argyll\bin\dispwin.exe",
                 @"C:\Program Files (x86)\DisplayCAL\Argyll\bin\dispwin.exe",

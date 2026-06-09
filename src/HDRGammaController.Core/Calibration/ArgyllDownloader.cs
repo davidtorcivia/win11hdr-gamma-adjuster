@@ -18,15 +18,21 @@ namespace HDRGammaController.Core.Calibration
     /// </summary>
     public static class ArgyllDownloader
     {
-        /// <summary>
-        /// URL for ArgyllCMS Windows binaries.
-        /// </summary>
-        public const string ArgyllDownloadUrl = "https://www.argyllcms.com/Argyll_V3.3.0_win64_exe.zip";
+        // Version is centralized here. The extraction logic strips a leading
+        // "{ArgyllVersion}/" directory, and the path finders search for this version,
+        // so bumping these three lines is all that's needed to move versions.
+        //
+        // V3.3.0 had a bug where spotread, on failing to open the colorimeter's HID
+        // handle, exited silently with code 0 instead of reporting the error — the
+        // "silent HID fail" the session code works around. V3.5.0 (Feb 2026) also
+        // carries i1d3 measurement fixes, so it is the better baseline.
+        private const string ArgyllVersionNumber = "3.5.0";
 
-        /// <summary>
-        /// Current ArgyllCMS version being downloaded.
-        /// </summary>
-        public const string ArgyllVersion = "Argyll_V3.3.0";
+        /// <summary>URL for ArgyllCMS Windows binaries.</summary>
+        public const string ArgyllDownloadUrl = "https://www.argyllcms.com/Argyll_V" + ArgyllVersionNumber + "_win64_exe.zip";
+
+        /// <summary>Current ArgyllCMS version being downloaded (directory-name form).</summary>
+        public const string ArgyllVersion = "Argyll_V" + ArgyllVersionNumber;
 
         /// <summary>
         /// Minimum required version string (used for version comparison).

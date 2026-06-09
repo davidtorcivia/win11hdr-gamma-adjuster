@@ -311,38 +311,48 @@ namespace HDRGammaController.Core.Calibration
         private static string BuildSharingViolationMessage(string rawLine)
         {
             var sb = new StringBuilder();
-            sb.AppendLine("The colorimeter's HID handle is locked — Windows sharing violation (err 32).");
-            sb.AppendLine("spotread can enumerate the device but can't open it for measurement.");
-            sb.AppendLine("Reinstalling the driver does NOT help; the device needs to be released.\n");
+            sb.AppendLine("The colorimeter was found, but its HID handle couldn't be opened for");
+            sb.AppendLine("measurement — Windows sharing violation (err 32). spotread can enumerate");
+            sb.AppendLine("the device but something is holding it, or it's bound to a driver that");
+            sb.AppendLine("doesn't allow the exclusive access spotread needs.\n");
 
             var suspects = FindSuspectProcessesOnCurrentMachine();
             if (suspects.Count > 0)
             {
-                sb.AppendLine("Currently-running suspects on this machine:");
+                sb.AppendLine("Currently-running programs that may be holding the device:");
                 foreach (var p in suspects)
                     sb.AppendLine($"  • {p}");
                 sb.AppendLine("Close these first, then retry.\n");
             }
+            else
+            {
+                sb.AppendLine("No obvious color-software holder is running, which usually means the");
+                sb.AppendLine("device is bound to the wrong driver for spotread (see step 1), or a");
+                sb.AppendLine("background process is holding the HID handle (see steps 2–4).\n");
+            }
 
-            sb.AppendLine("If no obvious holder is running, try in this order:\n");
+            sb.AppendLine("Fixes, most effective first:\n");
 
-            sb.AppendLine("  1. UNPLUG the colorimeter USB cable for 10+ seconds, then plug back in.");
-            sb.AppendLine("     A long pause matters — Windows needs time to fully tear down the");
-            sb.AppendLine("     device stack and release any stuck kernel handle.\n");
+            sb.AppendLine("  1. BIND THE PROBE TO THE ARGYLLCMS USB DRIVER. This is what DisplayCAL");
+            sb.AppendLine("     does, and it bypasses the HID sharing conflict entirely by giving");
+            sb.AppendLine("     spotread exclusive libusb access. Run ArgyllCMS_install_USB.exe");
+            sb.AppendLine("     (in the Argyll 'usb' folder), pick your colorimeter, and install the");
+            sb.AppendLine("     driver. If calibration then works in DisplayCAL but not here, this is");
+            sb.AppendLine("     almost certainly the cause — the probe is on the native Windows HID");
+            sb.AppendLine("     driver, which is refusing the exclusive open.\n");
 
-            sb.AppendLine("  2. Disable DisplayCAL's auto-relaunch tasks (if DisplayCAL is installed):");
+            sb.AppendLine("  2. UNPLUG the colorimeter USB cable for 10+ seconds, then plug it into a");
+            sb.AppendLine("     different port. The long pause lets Windows fully tear down the device");
+            sb.AppendLine("     stack and release a stuck handle.\n");
+
+            sb.AppendLine("  3. Disable DisplayCAL's auto-relaunch tasks (if DisplayCAL is installed):");
             sb.AppendLine("     • Win+R -> taskschd.msc -> Task Scheduler Library");
-            sb.AppendLine("     • Right-click 'DisplayCAL Profile Loader Launcher' -> Disable");
-            sb.AppendLine("     • Also disable 'DisplayCAL Profile Loader Launcher - Daily Restart'");
-            sb.AppendLine("     These tasks respawn DisplayCAL-apply-profiles.exe after you close");
-            sb.AppendLine("     it from the tray, which can grab the HID device again.\n");
+            sb.AppendLine("     • Disable 'DisplayCAL Profile Loader Launcher' and its Daily Restart.");
+            sb.AppendLine("     These respawn the profile loader, which can re-grab the device.\n");
 
-            sb.AppendLine("  3. If the ArgyllCMS USB driver was recently installed, note that it");
-            sb.AppendLine("     can conflict with i1 Display Plus, which normally uses the standard");
-            sb.AppendLine("     Windows HID driver. Consider running ArgyllCMS_uninstall_USB.exe.\n");
-
-            sb.AppendLine("  4. As a last resort, reboot. A stale kernel HID handle won't clear");
-            sb.AppendLine("     until the system restarts.\n");
+            sb.AppendLine("  4. Only for i1 Display PLUS (not Pro): that model prefers the native HID");
+            sb.AppendLine("     driver, so if the ArgyllCMS USB driver was bound to it, run");
+            sb.AppendLine("     ArgyllCMS_uninstall_USB.exe instead. Reboot if a handle stays stuck.\n");
 
             sb.AppendLine("Underlying spotread line: " + rawLine.Trim());
             return sb.ToString();

@@ -636,6 +636,7 @@ namespace HDRGammaController.Core.Calibration
             {
                 @"C:\Program Files\ArgyllCMS",
                 @"C:\Program Files (x86)\ArgyllCMS",
+                @"C:\Program Files\Argyll_V3.5.0",
                 @"C:\Program Files\Argyll_V3.3.0",
                 @"C:\ArgyllCMS"
             };
