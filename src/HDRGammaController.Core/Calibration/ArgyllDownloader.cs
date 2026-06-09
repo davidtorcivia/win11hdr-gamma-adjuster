@@ -200,7 +200,15 @@ namespace HDRGammaController.Core.Calibration
 
                         if (string.IsNullOrEmpty(entryPath)) continue;
 
-                        string destPath = Path.Combine(LocalArgyllDir, entryPath);
+                        // SECURITY: Zip-slip guard. Entry names like "..\..\evil.exe" or
+                        // absolute paths must not escape the install directory.
+                        string destPath = Path.GetFullPath(Path.Combine(LocalArgyllDir, entryPath));
+                        string rootPrefix = Path.GetFullPath(LocalArgyllDir) + Path.DirectorySeparatorChar;
+                        if (!destPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+                        {
+                            throw new InvalidDataException(
+                                $"Archive entry '{entry.FullName}' resolves outside the install directory.");
+                        }
 
                         if (entry.FullName.EndsWith("/") || entry.FullName.EndsWith("\\"))
                         {
