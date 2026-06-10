@@ -1238,7 +1238,10 @@ namespace HDRGammaController
                     HdrMode: _measuredInHdr,
                     StateManager: _stateManager,
                     PreviousGammaMode: _previousGammaMode,
-                    PreviousSettings: _previousSettings));
+                    PreviousSettings: _previousSettings,
+                    PatchSize: _patchSize,
+                    PatchOffsetX: _patchOffsetX,
+                    PatchOffsetY: _patchOffsetY));
 
                 // Hands-free: the report applies the profile and verifies on open.
                 reportWindow.AutoApplyOnLoad = true;

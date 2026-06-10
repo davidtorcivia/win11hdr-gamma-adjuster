@@ -33,7 +33,8 @@ namespace HDRGammaController
             bool HdrMode = false,
             CalibrationStateManager? StateManager = null,
             GammaMode PreviousGammaMode = GammaMode.WindowsDefault,
-            CalibrationSettings? PreviousSettings = null);
+            CalibrationSettings? PreviousSettings = null,
+            double PatchSize = 600, double PatchOffsetX = 0, double PatchOffsetY = 0);
         private ApplyContext? _applyContext;
         private bool _profileApplied;
 
@@ -728,7 +729,7 @@ namespace HDRGammaController
 
             try
             {
-                patchWindow = new PatchDisplayWindow(ctx.Monitor);
+                patchWindow = new PatchDisplayWindow(ctx.Monitor, ctx.PatchSize, ctx.PatchOffsetX, ctx.PatchOffsetY);
                 patchWindow.Show();
 
                 var patches = CalibrationVerifier.BuildVerificationPatches();
@@ -738,6 +739,7 @@ namespace HDRGammaController
                 {
                     var p = patches[i];
                     VerifyButton.Content = $"Verifying {i + 1}/{patches.Count}…";
+                    patchWindow.SetStatus($"Verifying calibration — patch {i + 1} of {patches.Count} ({p.Name})");
                     patchWindow.SetColor(p.DisplayRgb.R, p.DisplayRgb.G, p.DisplayRgb.B);
                     await Task.Delay(i == 0 ? 1200 : 500); // settle (longer for the first patch)
                     results.Add(await colorimeter.MeasureAsync(p, ctx.HdrMode));
