@@ -54,17 +54,20 @@ namespace HDRGammaController.Core.Calibration
             try { matrix = Mhc2ProfileBuilder.BuildGamutMatrix(characterization, target); }
             catch (Exception ex) { return new InstallResult(false, "", $"Gamut matrix failed: {ex.Message}"); }
 
-            // GAMUT GUARD: if the target gamut is much wider than the panel can reproduce (e.g.
-            // calibrating an sRGB-class display to Rec.2020), the correction matrix swings far
-            // from identity — it tries to synthesize primaries the display can't emit, which
-            // clips and casts the whole image (magenta, in testing). Refuse and point the user
-            // at a reachable target rather than install a profile that wrecks color.
-            if (MatrixDistanceFromIdentity(matrix) > 0.35)
+            // GAMUT GUARD: block only when the target gamut is wider than the panel can EMIT
+            // (e.g. an sRGB-class display calibrated to Rec.2020). There the matrix has to
+            // synthesize primaries the display can't produce, so a target primary maps to a
+            // display drive value well above full-scale → clipping and a heavy cast (the magenta
+            // we hit). NARROWING a slightly-wide panel to sRGB/Rec.709 is perfectly reachable
+            // (drive values stay <= 1) and must NOT be blocked — that wrongly rejected a good
+            // Gamma-2.4 calibration. A small overshoot from white-point correction is fine.
+            double maxDrive = MaxTargetDrive(matrix);
+            if (maxDrive > 1.25)
                 return new InstallResult(false, "",
-                    $"The chosen target ('{target.Name}') has a much wider gamut than this display can " +
-                    "reproduce, so the correction would distort colors badly (the matrix is far from " +
-                    "neutral).\n\nCalibrate to a target the panel can actually reach — for an SDR display " +
-                    "that's almost always \"sRGB (Gamma 2.2)\". Re-run with sRGB selected.");
+                    $"The chosen target ('{target.Name}') needs primaries about {maxDrive:P0} of this " +
+                    "display's maximum — i.e. a wider gamut than the panel can physically produce, so the " +
+                    "correction would clip and cast color.\n\nCalibrate to a target the panel can reach — " +
+                    "for an SDR display that's usually \"sRGB (Gamma 2.2)\" or Rec.709. Re-run with that selected.");
 
             string profileName = BuildProfileName(monitor, target);
             string srcPath = Path.Combine(Path.GetTempPath(), profileName);
@@ -118,15 +121,18 @@ namespace HDRGammaController.Core.Calibration
         }
 
         /// <summary>
-        /// Max absolute deviation of a 3×3 matrix from the identity. ~0 for an on-gamut
-        /// calibration, large when the target gamut exceeds what the display can emit.
+        /// Largest display drive value the matrix demands for the target's primaries and white
+        /// (content R/G/B = (1,0,0),(0,1,0),(0,0,1),(1,1,1)). &lt;= ~1 means every target color is
+        /// reachable (including narrowing a wider panel); well above 1 means the target asks for
+        /// primaries the display can't emit → it would clip and cast.
         /// </summary>
-        private static double MatrixDistanceFromIdentity(double[,] m)
+        private static double MaxTargetDrive(double[,] m)
         {
             double max = 0;
-            for (int r = 0; r < 3; r++)
-                for (int c = 0; c < 3; c++)
-                    max = Math.Max(max, Math.Abs(m[r, c] - (r == c ? 1.0 : 0.0)));
+            (double, double, double)[] contents = { (1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 1) };
+            foreach (var (a, b, c) in contents)
+                for (int r = 0; r < 3; r++)
+                    max = Math.Max(max, m[r, 0] * a + m[r, 1] * b + m[r, 2] * c);
             return max;
         }
 

@@ -15,6 +15,8 @@ namespace HDRGammaController.Services
         // earlier 1809–1903 builds. We try the modern value first, then fall back.
         private const int DwmwaUseImmersiveDarkMode = 20;
         private const int DwmwaUseImmersiveDarkModePre20H1 = 19;
+        private const int DwmwaDisallowPeek = 11;     // window won't trigger peek
+        private const int DwmwaExcludedFromPeek = 12; // window stays opaque during Aero Peek
 
         [DllImport("dwmapi.dll", PreserveSig = true)]
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
@@ -49,6 +51,27 @@ namespace HDRGammaController.Services
             {
                 DwmSetWindowAttribute(hwnd, DwmwaUseImmersiveDarkModePre20H1, ref enabled, sizeof(int));
             }
+        }
+
+        /// <summary>
+        /// Keeps a window opaque during Aero Peek (hovering a taskbar thumbnail or the
+        /// Show-Desktop button) instead of letting the desktop show through. Essential for the
+        /// calibration patch window — a peek mid-measurement would feed the probe the desktop,
+        /// not the patch, and ruin the reading.
+        /// </summary>
+        public static void ExcludeFromPeek(Window window)
+        {
+            if (window == null) return;
+            void Apply2(IntPtr hwnd)
+            {
+                if (hwnd == IntPtr.Zero) return;
+                int on = 1;
+                DwmSetWindowAttribute(hwnd, DwmwaExcludedFromPeek, ref on, sizeof(int));
+                DwmSetWindowAttribute(hwnd, DwmwaDisallowPeek, ref on, sizeof(int));
+            }
+            var h = new WindowInteropHelper(window).Handle;
+            if (h != IntPtr.Zero) Apply2(h);
+            else window.SourceInitialized += (_, _) => Apply2(new WindowInteropHelper(window).Handle);
         }
     }
 }

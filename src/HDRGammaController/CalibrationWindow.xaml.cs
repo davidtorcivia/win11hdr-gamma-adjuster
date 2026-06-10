@@ -137,6 +137,9 @@ namespace HDRGammaController
         public CalibrationWindow()
         {
             InitializeComponent();
+            // Keep the patch opaque if the user (or a stray hover) triggers Aero Peek mid-run,
+            // so the probe never reads the desktop instead of the patch.
+            Services.WindowTheme.ExcludeFromPeek(this);
             _calibrationPreset = CalibrationPreset.Standard;
         }
 
@@ -592,6 +595,19 @@ namespace HDRGammaController
 
         private async void BeginMeasurement_Click(object sender, RoutedEventArgs e)
         {
+            // If THIS app already installed a calibration profile on the target monitor, Windows
+            // is applying it at the compositor and we'd be measuring the display THROUGH our own
+            // correction — a useless reading. Remove it first so we characterize the native panel.
+            if (_settingsManager != null && _targetMonitor != null &&
+                _settingsManager.GetMonitorProfile(_targetMonitor.MonitorDevicePath)?.Mhc2ProfileName is { } activeProfile)
+            {
+                Log.Info($"CalibrationWindow: Removing our active calibration profile '{activeProfile}' before measuring native.");
+                CalibrationProfileInstaller.Uninstall(_targetMonitor, activeProfile);
+                _settingsManager.SetMhc2Calibration(_targetMonitor.MonitorDevicePath, null);
+                NativeGammaRamp.TryClear(_targetMonitor.DeviceName);
+                await Task.Delay(300); // let the compositor drop the profile
+            }
+
             // Enter bypass mode - disable all color corrections for accurate measurement
             if (_stateManager != null && _targetMonitor != null && !_bypassApplied)
             {
