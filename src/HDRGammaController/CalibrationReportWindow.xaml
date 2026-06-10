@@ -468,6 +468,7 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
                 <TextBlock Grid.Column="0" x:Name="StatusText"
@@ -499,6 +500,15 @@
                         Click="VerifyButton_Click"/>
 
                 <Button Grid.Column="4"
+                        x:Name="ToggleProfileButton"
+                        Content="Disable Profile"
+                        Visibility="Collapsed"
+                        ToolTip="A/B comparison: toggle the freshly applied profile off and on without leaving the report."
+                        Style="{StaticResource SecondaryButton}"
+                        Margin="0,0,10,0"
+                        Click="ToggleProfileButton_Click"/>
+
+                <Button Grid.Column="5"
                         x:Name="CloseButton"
                         Content="Close"
                         Style="{StaticResource SecondaryButton}"

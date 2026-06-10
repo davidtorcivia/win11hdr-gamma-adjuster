@@ -40,15 +40,13 @@ namespace HDRGammaController.Tests
             }).ToList();
         }
 
-        private static readonly (double R, double G, double B) NoGains = (1.0, 1.0, 1.0);
-
         [Fact]
         public void PerfectPqPanel_YieldsIdentityLut_InMeasuredRange()
         {
             // Panel that tracks ST.2084 exactly: wire p produces ST2084(p) nits (plus a tiny
             // black floor so the range checks pass).
             var measurements = SimulatePanel(p => Math.Max(TransferFunctions.PqEotf(p), 0.05));
-            var result = HdrMhc2LutBuilder.Build(measurements, SdrWhite, NoGains);
+            var result = HdrMhc2LutBuilder.Build(measurements, SdrWhite);
 
             // Within the solidly-measured range (above black noise, below the blend window)
             // the LUT must be identity: the panel needs no correction.
@@ -73,7 +71,7 @@ namespace HDRGammaController.Tests
                 double norm = ideal / SdrWhite;
                 return Math.Max(SdrWhite * Math.Pow(norm, 1.2), 0.05); // darker midtones
             });
-            var result = HdrMhc2LutBuilder.Build(measurements, SdrWhite, NoGains);
+            var result = HdrMhc2LutBuilder.Build(measurements, SdrWhite);
 
             int checkedCount = 0;
             for (int i = 0; i < 1024; i++)
@@ -89,27 +87,21 @@ namespace HDRGammaController.Tests
         }
 
         [Fact]
-        public void WhiteGains_ReduceChannelsIndependently()
+        public void Luts_AreNeutral_IdenticalAcrossChannels()
         {
+            // White-point correction lives in the (uniformly scaled) matrix; per-channel LUT
+            // differences would re-tint saturated colors, so the LUTs must be identical.
             var measurements = SimulatePanel(p => Math.Max(TransferFunctions.PqEotf(p), 0.05));
-            var result = HdrMhc2LutBuilder.Build(measurements, SdrWhite, (1.0, 0.90, 0.82));
-
-            // Lower gain → lower desired nits → lower wire signal, strictly ordered R > G > B
-            // anywhere meaningfully bright.
-            for (int i = 0; i < 1024; i++)
-            {
-                double nits = TransferFunctions.PqEotf(i / 1023.0);
-                if (nits < 5.0) continue;
-                Assert.True(result.LutR[i] >= result.LutG[i] && result.LutG[i] >= result.LutB[i],
-                    $"gain ordering violated at index {i}: R={result.LutR[i]:F4} G={result.LutG[i]:F4} B={result.LutB[i]:F4}");
-            }
+            var result = HdrMhc2LutBuilder.Build(measurements, SdrWhite);
+            Assert.Equal(result.LutR, result.LutG);
+            Assert.Equal(result.LutR, result.LutB);
         }
 
         [Fact]
         public void AboveMeasuredRange_ContinuesAnalytically_AndStaysMonotonic()
         {
             var measurements = SimulatePanel(p => Math.Max(TransferFunctions.PqEotf(p), 0.05));
-            var result = HdrMhc2LutBuilder.Build(measurements, SdrWhite, NoGains);
+            var result = HdrMhc2LutBuilder.Build(measurements, SdrWhite);
 
             // Far above the measured ceiling (e.g. 1000+ nits on a 200-nit-measured sweep)
             // the LUT must be the analytic passthrough — never extrapolated measurement data.
@@ -136,7 +128,7 @@ namespace HDRGammaController.Tests
             var measurements = SimulatePanel(p => Math.Max(TransferFunctions.PqEotf(p), 0.05))
                 .Take(3).ToList();
             Assert.Throws<InvalidOperationException>(() =>
-                HdrMhc2LutBuilder.Build(measurements, SdrWhite, NoGains));
+                HdrMhc2LutBuilder.Build(measurements, SdrWhite));
         }
     }
 }

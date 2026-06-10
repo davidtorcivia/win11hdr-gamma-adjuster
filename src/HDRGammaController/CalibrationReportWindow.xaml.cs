@@ -409,11 +409,18 @@ namespace HDRGammaController
         {
             if (_characterization == null) return;
             var target = _profile?.Target;
-            double targetGamma = target?.Gamma ?? 2.2;
+            // For PQ (HDR) targets the measured patches are SDR content rendered by Windows
+            // with the sRGB curve — plotting the PQ EOTF against SDR-content signals produced
+            // a nonsense S-curve "target". Grade and draw against the sRGB content curve.
+            bool pqTarget = target?.TransferFunction == TransferFunctionType.Pq;
+            double targetGamma = pqTarget ? 2.2 : (target?.Gamma ?? 2.2);
+            string targetLabel = pqTarget ? "Target (sRGB content)" : "Target";
             const int N = 41;
 
             double MeasuredOut(ToneCurve? curve, double v) => curve?.Lookup(v) ?? v;
-            double TargetOut(double v) => target?.ApplyEotf(v) ?? Math.Pow(v, targetGamma);
+            double TargetOut(double v) => pqTarget
+                ? ColorMath.SrgbEotf(v)
+                : (target?.ApplyEotf(v) ?? Math.Pow(v, targetGamma));
 
             // The raw measured grayscale steps (when available): the fitted curve plus real
             // data points, instead of a model line pretending to be measurements.
@@ -442,7 +449,7 @@ namespace HDRGammaController
             }
             var toneSeries = new List<CalibrationCharts.Series>
             {
-                new("Target", CGrey, tRef, Dashed: true),
+                new(targetLabel, CGrey, tRef, Dashed: true),
                 new("Panel (fit)", Color.FromRgb(0x22, 0xd3, 0xee), tFit),
             };
             if (grays is { Count: > 1 })
@@ -451,14 +458,17 @@ namespace HDRGammaController
             CalibrationCharts.DrawLineChart(ToneCanvas, toneSeries, 0, 1, 0, 1, "Input signal", "Output");
 
             // 2. Gamma tracking (fit line + per-point measured gamma) vs the flat target gamma.
+            // log(out)/log(in) is numerically unstable as input → 1 (the fit line used to
+            // nosedive at the right edge) — evaluate only over [0.05, 0.95].
             var gammaMeas = new List<(double, double)>();
             var gammaRef = new List<(double, double)>();
             for (int i = 1; i < N; i++)
             {
                 double v = i / (N - 1.0);
-                double outv = MeasuredOut(_characterization.RedToneCurve, v);
                 gammaRef.Add((v, targetGamma));
-                if (v > 0 && v < 1 && outv > 0) gammaMeas.Add((v, Math.Log(outv) / Math.Log(v)));
+                if (v is < 0.05 or > 0.95) continue;
+                double outv = MeasuredOut(_characterization.RedToneCurve, v);
+                if (outv > 0) gammaMeas.Add((v, Math.Log(outv) / Math.Log(v)));
             }
             var gammaSeries = new List<CalibrationCharts.Series>
             {
@@ -529,7 +539,10 @@ namespace HDRGammaController
             }
         }
 
-        private void ApplyButton_Click(object sender, RoutedEventArgs e)
+        private string? _installedProfileName;
+        private bool _profileEnabled;
+
+        private async void ApplyButton_Click(object sender, RoutedEventArgs e)
         {
             if (_applyContext == null || _characterization == null)
             {
@@ -558,13 +571,19 @@ namespace HDRGammaController
                     // on its next tick via the apply path's MHC2-aware composition.
                     NativeGammaRamp.TryClear(ctx.Monitor.DeviceName);
                     _profileApplied = true;
+                    _installedProfileName = result.ProfileName;
+                    _profileEnabled = true;
+                    ToggleProfileButton.Visibility = Visibility.Visible;
+                    ToggleProfileButton.Content = "Disable Profile";
                     ctx.OnInstalled?.Invoke(result.ProfileName);
-                    MessageBox.Show(
-                        "Calibration applied.\n\n" +
-                        "Your display now uses the measured gamut + tone correction as its " +
-                        "Windows color profile — persistently, including in HDR. Night mode and " +
-                        "gamma adjustments layer on top.",
-                        "Calibration Applied", MessageBoxButton.OK, MessageBoxImage.Information);
+
+                    // Verify automatically: the probe is still on the display right after a
+                    // calibration, and the measured "after" is the whole point of applying.
+                    StatusText.Text = "Profile applied — verifying through the correction…";
+                    if (ctx.Colorimeter != null)
+                        await RunVerificationAsync();
+                    else
+                        StatusText.Text = "Profile applied.";
                 }
                 else
                 {
@@ -575,6 +594,34 @@ namespace HDRGammaController
             finally
             {
                 ApplyButton.IsEnabled = true;
+            }
+        }
+
+        /// <summary>
+        /// A/B toggle for the freshly applied profile: Disable removes the association
+        /// (file stays installed), Enable re-associates it — eyes-on comparison of
+        /// corrected vs native without leaving the report.
+        /// </summary>
+        private void ToggleProfileButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_applyContext is not { } ctx || _installedProfileName is not { } profileName) return;
+
+            if (_profileEnabled)
+            {
+                CalibrationProfileInstaller.Disable(ctx.Monitor, profileName);
+                _profileEnabled = false;
+                ToggleProfileButton.Content = "Enable Profile";
+                StatusText.Text = "Profile disabled — showing the uncorrected panel for comparison.";
+            }
+            else if (CalibrationProfileInstaller.Reenable(ctx.Monitor, profileName, ctx.HdrMode))
+            {
+                _profileEnabled = true;
+                ToggleProfileButton.Content = "Disable Profile";
+                StatusText.Text = "Profile re-enabled.";
+            }
+            else
+            {
+                StatusText.Text = "Could not re-enable the profile — use Apply Profile to reinstall it.";
             }
         }
 
@@ -607,6 +654,19 @@ namespace HDRGammaController
                   "Place the probe on the display, then press Yes to start.";
             if (MessageBox.Show(prompt, "Verify Calibration", MessageBoxButton.YesNo,
                     MessageBoxImage.Question) != MessageBoxResult.Yes)
+                return;
+
+            await RunVerificationAsync();
+        }
+
+        /// <summary>
+        /// The verify sweep itself (no prompts): measures the verification patches through
+        /// whatever Windows is currently applying and fills the "after" row + grade.
+        /// Runs automatically after Apply Profile, and from the Verify button for re-runs.
+        /// </summary>
+        private async Task RunVerificationAsync()
+        {
+            if (_applyContext?.Colorimeter is not { } colorimeter || _applyContext is not { } ctx)
                 return;
 
             VerifyButton.IsEnabled = false;

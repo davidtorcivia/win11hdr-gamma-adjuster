@@ -57,12 +57,7 @@ namespace HDRGammaController.Core.Calibration
                 return new InstallResult(false, "", "No MHC2 template found to base the profile on.");
 
             double[,] matrix;
-            (double R, double G, double B) whiteGains;
-            try
-            {
-                matrix = Mhc2ProfileBuilder.BuildGamutMatrix(characterization, target);
-                whiteGains = Mhc2ProfileBuilder.WhitePointLutGains(characterization, target);
-            }
+            try { matrix = Mhc2ProfileBuilder.BuildGamutMatrix(characterization, target); }
             catch (Exception ex) { return new InstallResult(false, "", $"Gamut matrix failed: {ex.Message}"); }
 
             // GAMUT GUARD: block only when the target gamut is wider than the panel can EMIT
@@ -81,37 +76,34 @@ namespace HDRGammaController.Core.Calibration
                     "correction would clip and cast color.\n\nCalibrate to a target the panel can reach — " +
                     "for an SDR display that's usually \"sRGB (Gamma 2.2)\" or Rec.709. Re-run with that selected.");
 
-            // Per-channel tone LUTs with the white-point correction folded in.
-            //  SDR: scale the caller's signal-domain LUTs by gain^(1/gamma) (for a gamma-law
-            //       panel a linear gain is exactly that signal gain).
-            //  HDR: the LUTs live in PQ wire-signal domain instead — build them from the HDR
-            //       measurements with the gains applied in nits.
-            double[] gainedR, gainedG, gainedB;
+            // White-point handling: the matrix is ABSOLUTE (maps content white to the target
+            // white), so on a panel whose white differs some channel needs >1.0 drive for
+            // white. Dim ALL channels uniformly to fit — chromaticities (including the
+            // primaries) stay exact; per-channel compensation here would re-tint them.
+            double uniformScale = Mhc2ProfileBuilder.UniformScale(maxDrive);
+            double[,] scaledMatrix = Mhc2ProfileBuilder.ScaleMatrix(matrix, uniformScale);
+
+            // Tone LUTs are NEUTRAL (identical channels).
+            //  SDR: the caller's signal-domain tone LUTs, as-is.
+            //  HDR: PQ wire-signal domain LUTs built from the HDR measurements.
+            double[] toneR = lutR, toneG = lutG, toneB = lutB;
             double? headerMinNits = null, headerMaxNits = null;
             if (hdrMode)
             {
                 HdrMhc2LutBuilder.Result hdrLuts;
-                try { hdrLuts = HdrMhc2LutBuilder.Build(measurements!, monitor.SdrWhiteLevel, whiteGains); }
+                try { hdrLuts = HdrMhc2LutBuilder.Build(measurements!, monitor.SdrWhiteLevel); }
                 catch (Exception ex) { return new InstallResult(false, "", $"HDR LUT generation failed: {ex.Message}"); }
-                (gainedR, gainedG, gainedB) = (hdrLuts.LutR, hdrLuts.LutG, hdrLuts.LutB);
+                (toneR, toneG, toneB) = (hdrLuts.LutR, hdrLuts.LutG, hdrLuts.LutB);
 
                 // MHC2 header range: the panel's DXGI-reported HDR range when available
                 // (matches what the Windows HDR Calibration app writes), else measured.
                 headerMinNits = hdrLuts.MeasuredBlackNits;
                 headerMaxNits = monitor.HdrPeakNits > 50 ? monitor.HdrPeakNits : hdrLuts.MeasuredPeakNits;
             }
-            else
-            {
-                double gamma = characterization.MeasuredGamma is > 1.0 and < 3.5
-                    ? characterization.MeasuredGamma : 2.2;
-                gainedR = ApplySignalGain(lutR, whiteGains.R, gamma);
-                gainedG = ApplySignalGain(lutG, whiteGains.G, gamma);
-                gainedB = ApplySignalGain(lutB, whiteGains.B, gamma);
-            }
 
             // Windows applies the MHC2 matrix sandwiched between fixed sRGB↔XYZ conversions,
             // so the tag must hold the matrix pre-wrapped into that domain.
-            double[,] mhc2Matrix = Mhc2ProfileBuilder.ToMhc2MatrixDomain(matrix);
+            double[,] mhc2Matrix = Mhc2ProfileBuilder.ToMhc2MatrixDomain(scaledMatrix);
 
             // Self-documenting diagnostics: every install logs exactly what was computed, so a
             // bad-looking result can be diagnosed from app.log without re-running calibration.
@@ -121,10 +113,10 @@ namespace HDRGammaController.Core.Calibration
                 $"  measured primaries R({c.RedPrimary.X:F4},{c.RedPrimary.Y:F4}) G({c.GreenPrimary.X:F4},{c.GreenPrimary.Y:F4}) " +
                 $"B({c.BluePrimary.X:F4},{c.BluePrimary.Y:F4}) W({c.WhitePoint.X:F4},{c.WhitePoint.Y:F4}) " +
                 $"peak {c.PeakLuminance:F1} cd/m², gamma {c.MeasuredGamma:F2}\n" +
-                $"  gamut matrix (RGB→RGB, white-preserving): {FormatMatrix(matrix)}\n" +
-                $"  MHC2 tag matrix (XYZ-domain wrapped):     {FormatMatrix(mhc2Matrix)}\n" +
-                $"  white-point LUT gains R={whiteGains.R:F4} G={whiteGains.G:F4} B={whiteGains.B:F4}, " +
-                $"max target drive {maxDrive:F3}, mode {(hdrMode ? "HDR (PQ-domain LUTs)" : "SDR")}" +
+                $"  gamut matrix (RGB→RGB, absolute): {FormatMatrix(matrix)}\n" +
+                $"  uniform scale {uniformScale:F4} (max target drive {maxDrive:F3})\n" +
+                $"  MHC2 tag matrix (XYZ-domain wrapped): {FormatMatrix(mhc2Matrix)}\n" +
+                $"  mode {(hdrMode ? "HDR (PQ-domain LUTs)" : "SDR")}" +
                 (hdrMode ? $", header range {headerMinNits:F3}–{headerMaxNits:F0} nits, SDR white {monitor.SdrWhiteLevel:F0} nits" : ""));
 
             string profileName = BuildProfileName(monitor, target);
@@ -134,7 +126,7 @@ namespace HDRGammaController.Core.Calibration
             {
                 // The internal description is what Windows Color Management displays — without
                 // it the profile shows the template's leftover "SDR ACM: srgb_d50 [...]" text.
-                Mhc2ProfileBuilder.Build(template, srcPath, mhc2Matrix, gainedR, gainedG, gainedB,
+                Mhc2ProfileBuilder.Build(template, srcPath, mhc2Matrix, toneR, toneG, toneB,
                     description: Path.GetFileNameWithoutExtension(profileName),
                     minLuminanceNits: headerMinNits, maxLuminanceNits: headerMaxNits);
 
@@ -230,6 +222,40 @@ namespace HDRGammaController.Core.Calibration
             }
         }
 
+        /// <summary>
+        /// Re-associates an already-installed profile after <see cref="Disable"/> — the
+        /// on/off half of A/B comparing a fresh calibration. Returns false if Windows
+        /// refuses the association.
+        /// </summary>
+        public static bool Reenable(MonitorInfo monitor, string profileName, bool hdrMode)
+        {
+            if (string.IsNullOrEmpty(monitor.MonitorDevicePath) || string.IsNullOrEmpty(profileName)) return false;
+            try
+            {
+                if (hdrMode)
+                {
+                    if (!DisplayConfig.TryGetPathForGdiName(monitor.DeviceName, out var adapterId, out uint sourceId, out _))
+                        return false;
+                    return Wcs.ColorProfileAddDisplayAssociation(
+                        Wcs.WCS_PROFILE_MANAGEMENT_SCOPE.WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+                        profileName, adapterId, sourceId,
+                        setAsDefault: true, associateAsAdvancedColor: true) == 0;
+                }
+
+                if (!Wcs.AssociateColorProfileWithDevice(null, profileName, monitor.MonitorDevicePath))
+                    return false;
+                Wcs.WcsSetDefaultColorProfile(
+                    Wcs.WCS_PROFILE_MANAGEMENT_SCOPE.WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+                    monitor.MonitorDevicePath, Wcs.CPT_ICC, Wcs.CPST_PERCEPTUAL, 0, profileName);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"CalibrationProfileInstaller: Reenable failed: {ex.Message}");
+                return false;
+            }
+        }
+
         /// <summary>Fully removes a previously-installed calibration profile from a monitor.</summary>
         public static void Uninstall(MonitorInfo monitor, string profileName)
         {
@@ -252,16 +278,6 @@ namespace HDRGammaController.Core.Calibration
         /// reachable (including narrowing a wider panel); well above 1 means the target asks for
         /// primaries the display can't emit → it would clip and cast.
         /// </summary>
-        /// <summary>Scales a signal-domain tone LUT by a linear-light gain (gain^(1/gamma)).</summary>
-        private static double[] ApplySignalGain(double[] lut, double linearGain, double gamma)
-        {
-            double signalGain = Math.Pow(Math.Clamp(linearGain, 1e-6, 1.0), 1.0 / gamma);
-            var result = new double[lut.Length];
-            for (int i = 0; i < lut.Length; i++)
-                result[i] = Math.Clamp(lut[i] * signalGain, 0.0, 1.0);
-            return result;
-        }
-
         private static string FormatMatrix(double[,] m) =>
             $"[{m[0, 0]:F5} {m[0, 1]:F5} {m[0, 2]:F5}; " +
             $"{m[1, 0]:F5} {m[1, 1]:F5} {m[1, 2]:F5}; " +

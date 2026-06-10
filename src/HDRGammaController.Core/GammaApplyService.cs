@@ -87,12 +87,13 @@ namespace HDRGammaController.Core
 
             bool nightModeActive = nightKelvinOverride.HasValue || currentKelvin < 6450;
 
-            // Compose with a native MHC2 calibration: Windows is already applying the measured
-            // gamut + target tone at the compositor, so the GPU gamma ramp must not also apply
-            // a tone curve (that would double the gamma). Force passthrough tone here; the
-            // night-mode temperature shift below still rides on top.
-            if (_settingsManager.HasMhc2Calibration(monitor.MonitorDevicePath))
-                mode = GammaMode.WindowsDefault;
+            // Composition with a native MHC2 calibration: the profile corrects the PANEL
+            // (gamut, white point, tone tracking) at the compositor, which makes the display
+            // behave like the ideal panel the mode LUTs already assume — so the user's gamma
+            // preference composes CORRECTLY on top and must not be forced off. (The old
+            // force-to-WindowsDefault here predates that: it guarded against the measured
+            // VCGT correction curves double-applying, but the live path never passes those —
+            // RequestApply always uses the profile-less ApplyGamma overload.)
 
             CalibrationSettings calibration;
             if (manualCalibration != null)

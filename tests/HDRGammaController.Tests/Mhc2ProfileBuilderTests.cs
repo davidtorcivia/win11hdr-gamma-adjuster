@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using Xunit;
 using HDRGammaController.Core.Calibration;
 
@@ -194,12 +195,12 @@ namespace HDRGammaController.Tests
         }
 
         [Fact]
-        public void BuildGamutMatrix_IsWhitePreserving_OnACoolDisplay()
+        public void ScaledAbsoluteMatrix_HitsTargetWhite_WithoutClipping_AndKeepsPrimaries()
         {
-            // The gamut matrix must NOT shift the white point: an absolute white correction in
-            // the matrix drives the deficient channel above 1.0 (clips at full scale). On a
-            // cool (blue-ish) panel the matrix must map neutral to neutral exactly; the white
-            // correction lives in the per-channel LUT gains instead.
+            // The absolute matrix + UNIFORM scale must reproduce the target white chromaticity
+            // (the whole point of white-point calibration), keep every drive value at or
+            // below full scale, AND leave primary chromaticities exact — per-channel gains
+            // here would re-tint them (the verified-primaries regression on the first HDR run).
             var target = StandardTargets.SrgbGamma22;
             var coolWhite = new Chromaticity(0.297, 0.318); // measured M27Q-like cool white
             var displayMatrix = ColorMath.CalculateRgbToXyzMatrix(
@@ -211,40 +212,27 @@ namespace HDRGammaController.Tests
             };
 
             var m = Mhc2ProfileBuilder.BuildGamutMatrix(characterization, target);
-            double[] dispRgb = MulVec(m, 1.0, 1.0, 1.0);
-            Assert.Equal(1.0, dispRgb[0], 3);
-            Assert.Equal(1.0, dispRgb[1], 3);
-            Assert.Equal(1.0, dispRgb[2], 3);
-        }
+            double maxDrive = 0;
+            foreach (var content in new[] { (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 1.0) })
+                foreach (double c in MulVec(m, content.Item1, content.Item2, content.Item3))
+                    maxDrive = Math.Max(maxDrive, c);
+            var scaled = Mhc2ProfileBuilder.ScaleMatrix(m, Mhc2ProfileBuilder.UniformScale(maxDrive));
 
-        [Fact]
-        public void WhitePointLutGains_ReproduceTargetWhite_AndNeverExceedFullScale()
-        {
-            var target = StandardTargets.SrgbGamma22;
-            var coolWhite = new Chromaticity(0.297, 0.318);
-            var displayMatrix = ColorMath.CalculateRgbToXyzMatrix(
-                new Chromaticity(0.64, 0.33), new Chromaticity(0.30, 0.60), new Chromaticity(0.15, 0.06), coolWhite);
-            var characterization = new DisplayCharacterization
-            {
-                RgbToXyzMatrix = displayMatrix,
-                WhitePoint = coolWhite,
-            };
+            // White: lands on D65 chromaticity, limiting channel exactly at full scale.
+            double[] whiteDrive = MulVec(scaled, 1, 1, 1);
+            Assert.True(whiteDrive.All(c => c <= 1.0 + 1e-9), "white drive must not clip");
+            double[] whiteXyz = MulVec(displayMatrix, whiteDrive[0], whiteDrive[1], whiteDrive[2]);
+            var pw = new CieXyz(whiteXyz[0], whiteXyz[1], whiteXyz[2]).ToChromaticity();
+            Assert.Equal(target.WhitePoint.X, pw.X, 3);
+            Assert.Equal(target.WhitePoint.Y, pw.Y, 3);
 
-            var (gr, gg, gb) = Mhc2ProfileBuilder.WhitePointLutGains(characterization, target);
-
-            // Gains are normalized: nothing above full scale, the limiting channel exactly 1.
-            Assert.True(gr <= 1.0 && gg <= 1.0 && gb <= 1.0);
-            Assert.Equal(1.0, Math.Max(gr, Math.Max(gg, gb)), 6);
-            // Cool panel → red is the deficient channel (gain 1), blue gets pulled down.
-            Assert.Equal(1.0, gr, 6);
-            Assert.True(gb < gr, $"expected blue<red to warm a cool panel; got R={gr:F3} B={gb:F3}");
-
-            // Driving the panel with the gains lands on the target white chromaticity (D65).
-            double[] producedXyz = MulVec(displayMatrix, gr, gg, gb);
-            var px = new CieXyz(producedXyz[0], producedXyz[1], producedXyz[2]);
-            var targetWhite = target.WhitePoint;
-            Assert.Equal(targetWhite.X, px.ToChromaticity().X, 3);
-            Assert.Equal(targetWhite.Y, px.ToChromaticity().Y, 3);
+            // Primary: content red must land exactly on the target red chromaticity.
+            double[] redDrive = MulVec(scaled, 1, 0, 0);
+            Assert.True(redDrive.All(c => c <= 1.0 + 1e-9), "red drive must not clip");
+            double[] redXyz = MulVec(displayMatrix, redDrive[0], redDrive[1], redDrive[2]);
+            var pr = new CieXyz(redXyz[0], redXyz[1], redXyz[2]).ToChromaticity();
+            Assert.Equal(target.RedPrimary.X, pr.X, 3);
+            Assert.Equal(target.RedPrimary.Y, pr.Y, 3);
         }
 
         /// <summary>
@@ -272,12 +260,13 @@ namespace HDRGammaController.Tests
         }
 
         [Fact]
-        public void EngineModel_NeutralsStayNeutral_WithMeasuredM27QPanel()
+        public void EngineModel_WhiteLandsOnD65_WithMeasuredM27QPanel()
         {
             // Regression for the magenta cast (2026-06-10): the M27Q P's actual measured
             // primaries/white. Writing the RGB→RGB matrix RAW into the tag made the engine
             // render white as (R 1.39→clip, G 0.87, B 0.91) — blown red, crushed green =
-            // strong magenta. The wrapped white-preserving matrix must keep neutrals neutral.
+            // strong magenta. With the wrapped, uniformly-scaled absolute matrix the engine
+            // must drive white WITHOUT clipping, and the panel must then show D65.
             var measured = ColorMath.CalculateRgbToXyzMatrix(
                 new Chromaticity(0.6890, 0.3056), new Chromaticity(0.2569, 0.6714),
                 new Chromaticity(0.1472, 0.0590), new Chromaticity(0.2992, 0.3216));
@@ -288,13 +277,22 @@ namespace HDRGammaController.Tests
             };
             var target = StandardTargets.Rec709Gamma24;
 
-            var tag = Mhc2ProfileBuilder.ToMhc2MatrixDomain(
-                Mhc2ProfileBuilder.BuildGamutMatrix(characterization, target));
-            double[] wire = MulVec(EngineNetTransform(tag), 1.0, 1.0, 1.0);
+            var abs = Mhc2ProfileBuilder.BuildGamutMatrix(characterization, target);
+            double maxDrive = 0;
+            foreach (var content in new[] { (1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (1.0, 1.0, 1.0) })
+                foreach (double c in MulVec(abs, content.Item1, content.Item2, content.Item3))
+                    maxDrive = Math.Max(maxDrive, c);
+            var scaled = Mhc2ProfileBuilder.ScaleMatrix(abs, Mhc2ProfileBuilder.UniformScale(maxDrive));
+            var tag = Mhc2ProfileBuilder.ToMhc2MatrixDomain(scaled);
 
-            Assert.Equal(1.0, wire[0], 3);
-            Assert.Equal(1.0, wire[1], 3);
-            Assert.Equal(1.0, wire[2], 3);
+            double[] wire = MulVec(EngineNetTransform(tag), 1.0, 1.0, 1.0);
+            Assert.True(wire.All(c => c is >= 0 and <= 1.0 + 1e-9),
+                $"white drive must not clip: ({wire[0]:F3}, {wire[1]:F3}, {wire[2]:F3})");
+
+            double[] producedXyz = MulVec(measured, wire[0], wire[1], wire[2]);
+            var p = new CieXyz(producedXyz[0], producedXyz[1], producedXyz[2]).ToChromaticity();
+            Assert.Equal(target.WhitePoint.X, p.X, 3);
+            Assert.Equal(target.WhitePoint.Y, p.Y, 3);
         }
 
         private static double[] MulVec(double[,] m, double a, double b, double c) => new[]

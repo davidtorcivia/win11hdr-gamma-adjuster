@@ -140,8 +140,10 @@ namespace HDRGammaController.Services
                 canvas.Children.Add(e);
             }
 
-            Triangle(tR, tG, tB, Color.FromRgb(0x88, 0x88, 0x88), dashed: true);   // target gamut
+            // Measured first, target dashed ON TOP — when the two gamuts (nearly) coincide
+            // the target triangle must stay visible, not vanish under the measured one.
             Triangle(mR, mG, mB, Color.FromRgb(0x22, 0xc5, 0x5e), dashed: false);  // measured gamut
+            Triangle(tR, tG, tB, Color.FromRgb(0xaa, 0xaa, 0xaa), dashed: true);   // target gamut
             Dot(tW, Color.FromRgb(0xbb, 0xbb, 0xbb));                              // target white
             Dot(mW, Color.FromRgb(0xf9, 0x73, 0x16));                             // measured white
         }

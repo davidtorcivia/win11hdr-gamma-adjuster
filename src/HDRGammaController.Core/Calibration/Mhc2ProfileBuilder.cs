@@ -169,31 +169,40 @@ namespace HDRGammaController.Core.Calibration
         }
 
         /// <summary>
-        /// Gamut correction matrix mapping content (in the target's primaries, linear) to the
-        /// display's native linear RGB so the panel reproduces the target chromaticities:
-        /// M = displayXyzToRgb · bradford(targetWhite→displayWhite) · targetRgbToXyz.
+        /// ABSOLUTE gamut correction matrix mapping content (in the target's primaries,
+        /// linear) to the display's native linear RGB so the panel reproduces the target
+        /// chromaticities AND the target white point: M = displayXyzToRgb · targetRgbToXyz.
         ///
-        /// The Bradford step makes the matrix WHITE-PRESERVING (M·[1,1,1] = [1,1,1]): only the
-        /// primaries are corrected, relative to the panel's own white. Baking an absolute
-        /// white-point shift into the matrix instead drives a deficient channel above 1.0
-        /// (e.g. red 1.09 on a blue-ish panel), which clips at full scale and casts every
-        /// highlight. White-point correction belongs in the per-channel LUTs, scaled to fit —
-        /// see <see cref="WhitePointLutGains"/>.
+        /// On a panel whose white differs from the target, some channel exceeds 1.0 for
+        /// white (e.g. red 1.09 on a blue-ish panel) — resolve that with
+        /// <see cref="UniformScale"/>, which dims ALL channels equally. Do NOT resolve it
+        /// with per-channel gains: a diagonal gain matrix applied after this one re-tints
+        /// every non-neutral color the matrix just placed (that's what pushed the verified
+        /// primaries ΔE from 1.39 to 2.46 on the first HDR pass). Uniform scaling preserves
+        /// every chromaticity exactly and only costs peak luminance.
         /// </summary>
         public static double[,] BuildGamutMatrix(DisplayCharacterization characterization, CalibrationTarget target)
         {
             var displayRgbToXyz = characterization.RgbToXyzMatrix
                 ?? throw new InvalidOperationException("Characterization has no measured RGB→XYZ matrix.");
             var displayXyzToRgb = ColorMath.Invert3x3(displayRgbToXyz);
-            // Display white straight from the measured matrix (M·[1,1,1]) so the adaptation is
-            // exactly consistent with the inversion above.
-            var displayWhite = new CieXyz(
-                displayRgbToXyz[0, 0] + displayRgbToXyz[0, 1] + displayRgbToXyz[0, 2],
-                displayRgbToXyz[1, 0] + displayRgbToXyz[1, 1] + displayRgbToXyz[1, 2],
-                displayRgbToXyz[2, 0] + displayRgbToXyz[2, 1] + displayRgbToXyz[2, 2]);
-            var adapt = ColorMath.ChromaticAdaptationMatrix(target.WhitePoint.ToXyz(1), displayWhite);
-            return ColorMath.MultiplyMatrices(displayXyzToRgb,
-                ColorMath.MultiplyMatrices(adapt, target.RgbToXyzMatrix));
+            return ColorMath.MultiplyMatrices(displayXyzToRgb, target.RgbToXyzMatrix);
+        }
+
+        /// <summary>
+        /// The uniform luminance scale that brings the matrix's largest drive value down to
+        /// full scale (1.0 when nothing exceeds it). Apply with <see cref="ScaleMatrix"/>.
+        /// </summary>
+        public static double UniformScale(double maxTargetDrive) =>
+            maxTargetDrive > 1.0 ? 1.0 / maxTargetDrive : 1.0;
+
+        public static double[,] ScaleMatrix(double[,] m, double scale)
+        {
+            var r = new double[3, 3];
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++)
+                    r[i, j] = m[i, j] * scale;
+            return r;
         }
 
         /// <summary>
@@ -218,30 +227,6 @@ namespace HDRGammaController.Core.Calibration
                 ColorMath.MultiplyMatrices(rgbToRgbMatrix, ColorMath.Invert3x3(srgbToXyz)));
         }
 
-        /// <summary>
-        /// Per-channel LINEAR gains (max component = 1.0) that move the panel's native white to
-        /// the target white point: the device drive that reproduces target white, normalized so
-        /// no channel exceeds full scale. Multiplying the tone LUTs by these (in signal domain:
-        /// gain^(1/gamma)) performs the white-point correction the gamut matrix deliberately
-        /// no longer does. Costs a little peak luminance (1/maxDrive) — that's inherent to
-        /// white-point calibration on a panel whose white isn't the target white.
-        /// </summary>
-        public static (double R, double G, double B) WhitePointLutGains(
-            DisplayCharacterization characterization, CalibrationTarget target)
-        {
-            var displayRgbToXyz = characterization.RgbToXyzMatrix
-                ?? throw new InvalidOperationException("Characterization has no measured RGB→XYZ matrix.");
-            var displayXyzToRgb = ColorMath.Invert3x3(displayRgbToXyz);
-            var w = target.WhitePoint.ToXyz(1);
-            double r = displayXyzToRgb[0, 0] * w.X + displayXyzToRgb[0, 1] * w.Y + displayXyzToRgb[0, 2] * w.Z;
-            double g = displayXyzToRgb[1, 0] * w.X + displayXyzToRgb[1, 1] * w.Y + displayXyzToRgb[1, 2] * w.Z;
-            double b = displayXyzToRgb[2, 0] * w.X + displayXyzToRgb[2, 1] * w.Y + displayXyzToRgb[2, 2] * w.Z;
-            double max = Math.Max(r, Math.Max(g, b));
-            if (max <= 0 || r <= 0 || g <= 0 || b <= 0)
-                throw new InvalidOperationException(
-                    $"White-point drive is degenerate (R={r:F3} G={g:F3} B={b:F3}); measurements look invalid.");
-            return (r / max, g / max, b / max);
-        }
 
         private static void WriteLut(byte[] data, int lutOffset, double[] lut)
         {

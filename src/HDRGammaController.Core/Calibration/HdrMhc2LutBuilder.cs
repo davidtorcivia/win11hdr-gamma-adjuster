@@ -28,10 +28,14 @@ namespace HDRGammaController.Core.Calibration
 
         private const int LutSamples = 1024;
 
+        /// <remarks>
+        /// The LUT is NEUTRAL (identical per channel): white-point correction lives entirely
+        /// in the (uniformly scaled, absolute) gamut matrix. Per-channel gains here would
+        /// re-tint saturated colors the matrix already placed.
+        /// </remarks>
         public static Result Build(
             IEnumerable<MeasurementResult> measurements,
-            double sdrWhiteNits,
-            (double R, double G, double B) whiteGains)
+            double sdrWhiteNits)
         {
             if (sdrWhiteNits < 40 || sdrWhiteNits > 1000)
                 throw new ArgumentOutOfRangeException(nameof(sdrWhiteNits),
@@ -64,55 +68,48 @@ namespace HDRGammaController.Core.Calibration
                 throw new InvalidOperationException(
                     $"Measured HDR grayscale has almost no range ({blackNits:F2}–{peakNits:F2} nits) — readings look invalid.");
 
-            double[] BuildChannel(double gain)
+            var lut = new double[LutSamples];
+            // Blend window: the top 15% of the measured nits range fades from
+            // measured-inverse correction to the analytic continuation.
+            double blendStartNits = blackNits + (peakNits - blackNits) * 0.85;
+
+            for (int i = 0; i < LutSamples; i++)
             {
-                var lut = new double[LutSamples];
-                // Blend window: the top 15% of the measured nits range fades from
-                // measured-inverse correction to the analytic continuation.
-                double blendStartNits = blackNits + (peakNits - blackNits) * 0.85;
+                double p = i / (double)(LutSamples - 1);
+                double desired = TransferFunctions.PqEotf(p);
 
-                for (int i = 0; i < LutSamples; i++)
+                // Analytic passthrough: identity. Above the measured range this preserves
+                // the panel's own tone mapping behavior.
+                double analytic = p;
+
+                double v;
+                if (desired >= peakNits)
                 {
-                    double p = i / (double)(LutSamples - 1);
-                    double desired = gain * TransferFunctions.PqEotf(p);
-
-                    // Analytic passthrough: re-encode desired nits as PQ. Identity when
-                    // gain == 1; above the measured range this preserves the panel's own
-                    // tone mapping behavior.
-                    double analytic = TransferFunctions.PqInverseEotf(desired);
-
-                    double v;
-                    if (desired >= peakNits)
+                    v = analytic;
+                }
+                else
+                {
+                    double corrected = InverseResponse(points, Math.Max(desired, blackNits));
+                    if (desired <= blendStartNits)
                     {
-                        v = analytic;
+                        v = corrected;
                     }
                     else
                     {
-                        double corrected = InverseResponse(points, Math.Max(desired, blackNits));
-                        if (desired <= blendStartNits)
-                        {
-                            v = corrected;
-                        }
-                        else
-                        {
-                            double t = (desired - blendStartNits) / Math.Max(peakNits - blendStartNits, 1e-9);
-                            t = Math.Clamp(t, 0, 1);
-                            double s = t * t * (3 - 2 * t);
-                            v = corrected + (analytic - corrected) * s;
-                        }
+                        double t = (desired - blendStartNits) / Math.Max(peakNits - blendStartNits, 1e-9);
+                        t = Math.Clamp(t, 0, 1);
+                        double s = t * t * (3 - 2 * t);
+                        v = corrected + (analytic - corrected) * s;
                     }
-                    lut[i] = Math.Clamp(v, 0.0, 1.0);
                 }
-
-                // Monotonic cleanup — the regamma LUT must never invert.
-                for (int i = 1; i < LutSamples; i++)
-                    if (lut[i] < lut[i - 1]) lut[i] = lut[i - 1];
-                return lut;
+                lut[i] = Math.Clamp(v, 0.0, 1.0);
             }
 
-            return new Result(
-                BuildChannel(whiteGains.R), BuildChannel(whiteGains.G), BuildChannel(whiteGains.B),
-                blackNits, peakNits);
+            // Monotonic cleanup — the regamma LUT must never invert.
+            for (int i = 1; i < LutSamples; i++)
+                if (lut[i] < lut[i - 1]) lut[i] = lut[i - 1];
+
+            return new Result(lut, (double[])lut.Clone(), (double[])lut.Clone(), blackNits, peakNits);
         }
 
         /// <summary>The wire PQ signal that produced <paramref name="nits"/> on the measured panel.</summary>
