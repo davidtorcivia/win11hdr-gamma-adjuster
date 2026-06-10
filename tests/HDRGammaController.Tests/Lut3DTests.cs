@@ -10,6 +10,68 @@ namespace HDRGammaController.Tests
     /// </summary>
     public class Lut3DTests
     {
+        #region Measurement Validation Tests
+
+        private static MeasurementResult Meas(double r, double g, double b, double Y,
+            PatchCategory cat = PatchCategory.Grayscale)
+        {
+            // Neutral-ish XYZ scaled to luminance Y (D65-like chromaticity).
+            var xyz = new CieXyz(0.95047 * Y, Y, 1.08883 * Y);
+            return new MeasurementResult
+            {
+                Patch = new ColorPatch { Name = $"{r},{g},{b}", DisplayRgb = new LinearRgb(r, g, b), Category = cat },
+                Xyz = xyz,
+                IsValid = true
+            };
+        }
+
+        // A plausible grayscale ramp from ~0.1 to ~120 nits across 12 patches.
+        private static List<MeasurementResult> GoodRamp()
+        {
+            var list = new List<MeasurementResult>();
+            for (int i = 0; i < 12; i++)
+            {
+                double s = i / 11.0;
+                double Y = 0.1 + 120.0 * System.Math.Pow(s, 2.2);
+                list.Add(Meas(s, s, s, Y));
+            }
+            return list;
+        }
+
+        [Fact]
+        public void Generate_GoodMeasurements_DoesNotThrowValidation()
+        {
+            var gen = new Lut3DGenerator(StandardTargets.SrgbGamma22, GoodRamp());
+            // Should build a LUT without the validation gate throwing.
+            var lut = gen.Generate();
+            Assert.NotNull(lut);
+        }
+
+        [Fact]
+        public void Generate_AllBlackMeasurements_ThrowsActionableError()
+        {
+            // Probe connected but never read the screen: every patch ~0 nits.
+            var list = new List<MeasurementResult>();
+            for (int i = 0; i < 12; i++) { double s = i / 11.0; list.Add(Meas(s, s, s, 0.01)); }
+
+            var gen = new Lut3DGenerator(StandardTargets.SrgbGamma22, list);
+            var ex = Assert.Throws<InvalidOperationException>(() => gen.Generate());
+            Assert.Contains("near-black", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Generate_FlatMeasurements_ThrowsActionableError()
+        {
+            // Same reading for every patch (e.g. stale data): bright but no range.
+            var list = new List<MeasurementResult>();
+            for (int i = 0; i < 12; i++) { double s = i / 11.0; list.Add(Meas(s, s, s, 100.0)); }
+
+            var gen = new Lut3DGenerator(StandardTargets.SrgbGamma22, list);
+            Assert.Throws<InvalidOperationException>(() => gen.Generate());
+        }
+
+        #endregion
+
         #region Lut3D Basic Tests
 
         [Fact]

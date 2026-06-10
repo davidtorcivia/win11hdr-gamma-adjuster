@@ -280,7 +280,10 @@ namespace HDRGammaController.Core.Calibration
         public void SaveToFile(string path)
         {
             var json = JsonSerializer.Serialize(this, JsonOptions);
-            File.WriteAllText(path, json);
+            // Write-then-rename so a crash mid-write can't corrupt an existing profile.
+            string tmp = path + ".tmp";
+            File.WriteAllText(tmp, json);
+            File.Move(tmp, path, overwrite: true);
         }
 
         /// <summary>

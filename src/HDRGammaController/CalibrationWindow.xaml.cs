@@ -318,27 +318,59 @@ namespace HDRGammaController
                 ResizeMode = ResizeMode.NoResize;
                 WindowState = WindowState.Normal;
 
-                // Get the monitor this window is on using Win32 API
-                var helper = new WindowInteropHelper(this);
-                IntPtr hMonitor = MonitorFromWindow(helper.Handle, MONITOR_DEFAULTTONEAREST);
-
-                var monitorInfo = new MONITORINFO();
-                monitorInfo.cbSize = Marshal.SizeOf(typeof(MONITORINFO));
-
-                if (GetMonitorInfo(hMonitor, ref monitorInfo))
+                // Position the fullscreen patch on the monitor the user chose to
+                // calibrate — NOT wherever this window happens to sit. On a multi-monitor
+                // setup these differ, and getting it wrong puts the patches on one screen
+                // while the probe sits on another, silently measuring the wrong display.
+                bool positioned = false;
+                if (_targetMonitor != null)
                 {
-                    Left = monitorInfo.rcMonitor.Left;
-                    Top = monitorInfo.rcMonitor.Top;
-                    Width = monitorInfo.rcMonitor.Right - monitorInfo.rcMonitor.Left;
-                    Height = monitorInfo.rcMonitor.Bottom - monitorInfo.rcMonitor.Top;
+                    // Prefer the target's HMONITOR (most reliable across DPI/topologies).
+                    IntPtr targetHmon = _targetMonitor.HMonitor;
+                    var mi = new MONITORINFO { cbSize = Marshal.SizeOf(typeof(MONITORINFO)) };
+                    if (targetHmon != IntPtr.Zero && GetMonitorInfo(targetHmon, ref mi))
+                    {
+                        Left = mi.rcMonitor.Left;
+                        Top = mi.rcMonitor.Top;
+                        Width = mi.rcMonitor.Right - mi.rcMonitor.Left;
+                        Height = mi.rcMonitor.Bottom - mi.rcMonitor.Top;
+                        positioned = true;
+                    }
+                    else
+                    {
+                        // Fall back to the DXGI desktop bounds captured at enumeration.
+                        var b = _targetMonitor.MonitorBounds;
+                        if (b.Right > b.Left && b.Bottom > b.Top)
+                        {
+                            Left = b.Left;
+                            Top = b.Top;
+                            Width = b.Right - b.Left;
+                            Height = b.Bottom - b.Top;
+                            positioned = true;
+                        }
+                    }
                 }
-                else
+
+                if (!positioned)
                 {
-                    // Fallback to primary screen
-                    Left = 0;
-                    Top = 0;
-                    Width = SystemParameters.PrimaryScreenWidth;
-                    Height = SystemParameters.PrimaryScreenHeight;
+                    // Last resort: the monitor this window is on, then the primary.
+                    var helper = new WindowInteropHelper(this);
+                    IntPtr hMonitor = MonitorFromWindow(helper.Handle, MONITOR_DEFAULTTONEAREST);
+                    var monitorInfo = new MONITORINFO { cbSize = Marshal.SizeOf(typeof(MONITORINFO)) };
+                    if (GetMonitorInfo(hMonitor, ref monitorInfo))
+                    {
+                        Left = monitorInfo.rcMonitor.Left;
+                        Top = monitorInfo.rcMonitor.Top;
+                        Width = monitorInfo.rcMonitor.Right - monitorInfo.rcMonitor.Left;
+                        Height = monitorInfo.rcMonitor.Bottom - monitorInfo.rcMonitor.Top;
+                    }
+                    else
+                    {
+                        Left = 0;
+                        Top = 0;
+                        Width = SystemParameters.PrimaryScreenWidth;
+                        Height = SystemParameters.PrimaryScreenHeight;
+                    }
                 }
 
                 WindowedModeBanner.Visibility = Visibility.Collapsed;
@@ -461,7 +493,17 @@ namespace HDRGammaController
             ColorimeterModelText.Text = "";
             StartButton.IsEnabled = false;
 
-            await _colorimeterService.InitializeAsync();
+            // async void: surface failures instead of letting them escape to the
+            // global dispatcher handler, which would swallow them with no feedback.
+            try
+            {
+                await _colorimeterService.InitializeAsync();
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"CalibrationWindow.RefreshColorimeter: {ex.Message}");
+                ColorimeterStatusText.Text = "Colorimeter search failed";
+            }
             UpdateColorimeterStatus();
         }
 

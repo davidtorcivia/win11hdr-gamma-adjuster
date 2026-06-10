@@ -268,7 +268,10 @@ namespace HDRGammaController.Core.Calibration
             };
 
             string json = JsonSerializer.Serialize(data, options);
-            File.WriteAllText(path, json);
+            // Write-then-rename: a crash mid-write can't corrupt an existing profile.
+            string tmp = path + ".tmp";
+            File.WriteAllText(tmp, json);
+            File.Move(tmp, path, overwrite: true);
         }
 
         /// <summary>
