@@ -52,6 +52,10 @@ namespace HDRGammaController
             _correctionLut = correctionLut;
 
             PopulateReport();
+
+            // Charts need real canvas sizes, which exist only after layout.
+            Loaded += (_, _) => RenderCharts();
+            SizeChanged += (_, _) => RenderCharts();
         }
 
         private void PopulateReport()
@@ -370,6 +374,79 @@ namespace HDRGammaController
                     MessageBox.Show($"Failed to export LUT: {ex.Message}",
                         "Export Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
+            }
+        }
+
+        private static readonly Color CR = Color.FromRgb(0xff, 0x5a, 0x5a);
+        private static readonly Color CG = Color.FromRgb(0x55, 0xdd, 0x77);
+        private static readonly Color CB = Color.FromRgb(0x5a, 0x9c, 0xff);
+        private static readonly Color CGrey = Color.FromRgb(0x99, 0x99, 0x99);
+
+        private void RenderCharts()
+        {
+            if (_characterization == null) return;
+            var target = _profile?.Target;
+            double targetGamma = target?.Gamma ?? 2.2;
+            const int N = 41;
+
+            double MeasuredOut(ToneCurve? curve, double v) => curve?.Lookup(v) ?? v;
+            double TargetOut(double v) => target?.ApplyEotf(v) ?? Math.Pow(v, targetGamma);
+
+            // 1. Per-channel tone response vs target.
+            var tRef = new List<(double, double)>();
+            var tr = new List<(double, double)>(); var tg = new List<(double, double)>(); var tb = new List<(double, double)>();
+            for (int i = 0; i < N; i++)
+            {
+                double v = i / (N - 1.0);
+                tRef.Add((v, TargetOut(v)));
+                tr.Add((v, MeasuredOut(_characterization.RedToneCurve, v)));
+                tg.Add((v, MeasuredOut(_characterization.GreenToneCurve, v)));
+                tb.Add((v, MeasuredOut(_characterization.BlueToneCurve, v)));
+            }
+            CalibrationCharts.DrawLineChart(ToneCanvas, new[]
+            {
+                new CalibrationCharts.Series("Target", CGrey, tRef, Dashed: true),
+                new CalibrationCharts.Series("R", CR, tr),
+                new CalibrationCharts.Series("G", CG, tg),
+                new CalibrationCharts.Series("B", CB, tb),
+            }, 0, 1, 0, 1, "Input signal", "Output");
+
+            // 2. Gamma tracking (grey average) vs the flat target gamma.
+            var gammaMeas = new List<(double, double)>();
+            var gammaRef = new List<(double, double)>();
+            for (int i = 1; i < N; i++)
+            {
+                double v = i / (N - 1.0);
+                double outv = (MeasuredOut(_characterization.RedToneCurve, v) +
+                               MeasuredOut(_characterization.GreenToneCurve, v) +
+                               MeasuredOut(_characterization.BlueToneCurve, v)) / 3.0;
+                gammaRef.Add((v, targetGamma));
+                if (v > 0 && outv > 0) gammaMeas.Add((v, Math.Log(outv) / Math.Log(v)));
+            }
+            CalibrationCharts.DrawLineChart(GammaCanvas, new[]
+            {
+                new CalibrationCharts.Series($"Target {targetGamma:0.0}", CGrey, gammaRef, Dashed: true),
+                new CalibrationCharts.Series("Measured", Color.FromRgb(0x22, 0xd3, 0xee), gammaMeas),
+            }, 0, 1, 1.6, 2.8, "Input signal", "Gamma");
+
+            // 3. Grayscale RGB balance (per-channel response — shows color cast across the ramp).
+            CalibrationCharts.DrawLineChart(BalanceCanvas, new[]
+            {
+                new CalibrationCharts.Series("R", CR, tr),
+                new CalibrationCharts.Series("G", CG, tg),
+                new CalibrationCharts.Series("B", CB, tb),
+            }, 0, 1, 0, 1, "Input signal", "Channel");
+
+            // 4. Gamut + white point on CIE xy.
+            if (target != null)
+            {
+                CalibrationCharts.DrawGamutDiagram(GamutCanvas,
+                    (target.RedPrimary.X, target.RedPrimary.Y), (target.GreenPrimary.X, target.GreenPrimary.Y),
+                    (target.BluePrimary.X, target.BluePrimary.Y), (target.WhitePoint.X, target.WhitePoint.Y),
+                    (_characterization.RedPrimary.X, _characterization.RedPrimary.Y),
+                    (_characterization.GreenPrimary.X, _characterization.GreenPrimary.Y),
+                    (_characterization.BluePrimary.X, _characterization.BluePrimary.Y),
+                    (_characterization.WhitePoint.X, _characterization.WhitePoint.Y));
             }
         }
 

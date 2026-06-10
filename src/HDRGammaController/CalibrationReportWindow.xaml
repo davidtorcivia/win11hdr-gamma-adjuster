@@ -285,6 +285,53 @@
                     </StackPanel>
                 </Border>
 
+                <!-- Charts -->
+                <Border Style="{StaticResource CardBorder}">
+                    <StackPanel>
+                        <TextBlock Text="Tone Response &amp; Gamut" Style="{StaticResource SectionHeader}"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,4,8,12">
+                                <TextBlock Text="Per-channel tone response (measured vs target)" Style="{StaticResource MetricLabel}"/>
+                                <Border Background="#181818" CornerRadius="4" Height="200">
+                                    <Canvas x:Name="ToneCanvas"/>
+                                </Border>
+                            </StackPanel>
+
+                            <StackPanel Grid.Row="0" Grid.Column="1" Margin="8,4,0,12">
+                                <TextBlock Text="Gamma tracking" Style="{StaticResource MetricLabel}"/>
+                                <Border Background="#181818" CornerRadius="4" Height="200">
+                                    <Canvas x:Name="GammaCanvas"/>
+                                </Border>
+                            </StackPanel>
+
+                            <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,4,8,0">
+                                <TextBlock Text="Grayscale RGB balance" Style="{StaticResource MetricLabel}"/>
+                                <Border Background="#181818" CornerRadius="4" Height="200">
+                                    <Canvas x:Name="BalanceCanvas"/>
+                                </Border>
+                            </StackPanel>
+
+                            <StackPanel Grid.Row="1" Grid.Column="1" Margin="8,4,0,0">
+                                <TextBlock Text="Gamut + white point (CIE xy)" Style="{StaticResource MetricLabel}"/>
+                                <Border Background="#181818" CornerRadius="4" Height="200">
+                                    <Canvas x:Name="GamutCanvas"/>
+                                </Border>
+                            </StackPanel>
+                        </Grid>
+                        <TextBlock FontSize="11" Foreground="#707070" Margin="0,8,0,0" TextWrapping="Wrap"
+                                   Text="Dashed = target, solid = your display. Orange dot = measured white, gray dot = target white."/>
+                    </StackPanel>
+                </Border>
+
                 <!-- Primaries Comparison -->
                 <Border Style="{StaticResource CardBorder}">
                     <StackPanel>
