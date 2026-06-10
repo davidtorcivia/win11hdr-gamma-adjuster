@@ -140,6 +140,12 @@ namespace HDRGammaController.Core.Calibration
             // measurement rather than being swallowed by its raw-key reader.
             psi.Environment["ARGYLL_NOT_INTERACTIVE"] = "1";
 
+            // Kill any orphaned spotread from a previous run before starting. If the app was
+            // closed mid-calibration, its spotread can outlive it and keep the colorimeter's
+            // USB handle open, which makes the next calibration fail to connect. Only one
+            // spotread should ever be talking to the probe at a time.
+            KillStraySpotread(log);
+
             var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
             var session = new SpotreadSession(process, log);
 
@@ -224,6 +230,33 @@ namespace HDRGammaController.Core.Calibration
             {
                 lock (_stateLock) _pendingMeasurement = null;
             }
+        }
+
+        /// <summary>
+        /// Terminates any lingering spotread.exe processes (e.g. orphaned by a crash or by the
+        /// app being closed mid-calibration) so they release the colorimeter before we connect.
+        /// </summary>
+        private static void KillStraySpotread(Action<string> log)
+        {
+            try
+            {
+                foreach (var p in Process.GetProcessesByName("spotread"))
+                {
+                    using (p)
+                    {
+                        try
+                        {
+                            log($"Killing stray spotread (PID {p.Id}) holding the colorimeter");
+                            p.Kill(entireProcessTree: true);
+                            p.WaitForExit(2000);
+                        }
+                        catch { /* already gone / access denied — best effort */ }
+                    }
+                }
+                // Give Windows a moment to tear down the USB handle.
+                System.Threading.Thread.Sleep(300);
+            }
+            catch { /* enumeration can fail on locked-down machines; non-fatal */ }
         }
 
         private void OnLine(string? line, bool isError)
