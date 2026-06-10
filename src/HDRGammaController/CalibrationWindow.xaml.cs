@@ -104,6 +104,11 @@ namespace HDRGammaController
         private double _previousLeft, _previousTop, _previousWidth, _previousHeight;
         private bool _wasMaximized;
 
+        // Closed-loop refinement: number of apply→verify passes (1 = apply+verify once,
+        // >1 refines). 0 disables it (plain measure-only). Surfaced as a setting later;
+        // default to a few rounds so calibration produces a real before/after.
+        private int _refinementRounds = 3;
+
         // Patch placement offset (shared by positioning + measurement patches)
         private double _patchOffsetX, _patchOffsetY;
         private bool _isDraggingPatch;
@@ -620,6 +625,24 @@ namespace HDRGammaController
             _orchestrator.MeasurementTaken += Orchestrator_MeasurementTaken;
             _orchestrator.ErrorOccurred += Orchestrator_ErrorOccurred;
             _orchestrator.CalibrationCompleted += Orchestrator_CalibrationCompleted;
+            _orchestrator.PhaseChanged += (_, label) => Dispatcher.Invoke(() => PhaseText.Text = label);
+
+            // Enable the in-session apply → verify → refine closed loop when we have a target
+            // monitor + bypass manager. It loads each candidate correction onto the display's
+            // gamma ramp and re-measures, giving a real before/after instead of grading the
+            // uncorrected panel. Keep-best (in the orchestrator) makes refinement safe.
+            if (_stateManager != null && _targetMonitor != null && _refinementRounds > 0)
+            {
+                var corrector = new ClosedLoopCorrector(
+                    _calibrationTarget, _targetMonitor.SdrWhiteLevel, _targetMonitor.IsHdrActive);
+                _orchestrator.ClosedLoop = new ClosedLoopConfig
+                {
+                    Corrector = corrector,
+                    Apply = c => _stateManager.ApplyCorrectionLut(_targetMonitor, c.R, c.G, c.B),
+                    MaxRefinementRounds = _refinementRounds,
+                    TargetDeltaE = 1.0
+                };
+            }
 
             // Start calibration
             _isCalibrationRunning = true;
@@ -681,9 +704,22 @@ namespace HDRGammaController
                     Dispatcher.Invoke(() =>
                     {
                         string gradeStr = _calibrationMetrics?.GetGrade().ToString() ?? "?";
-                        ShowCompletion(true,
+                        string detail =
                             $"{_calibrationResult.Measurements.Count} patches measured in {FormatElapsedTime(_calibrationResult.TotalTime)}\n" +
-                            $"Average Delta E: {_calibrationMetrics?.AverageDeltaE:F2} (Grade: {gradeStr})");
+                            $"Average Delta E: {_calibrationMetrics?.AverageDeltaE:F2} (Grade: {gradeStr})";
+
+                        // When the closed loop ran, the headline is the real before/after of the
+                        // grayscale: how far off the panel was vs. after the correction we applied.
+                        if (_calibrationResult.ClosedLoopRan &&
+                            _calibrationResult.NativeResidualDeltaE is double before &&
+                            _calibrationResult.CorrectedResidualDeltaE is double after)
+                        {
+                            detail =
+                                $"Grayscale dE {before:F2} → {after:F2} after {_calibrationResult.RefinementRounds} pass(es)\n" +
+                                detail;
+                        }
+
+                        ShowCompletion(true, detail);
                     });
 
                     if (SoundNotificationsCheck.IsChecked == true)

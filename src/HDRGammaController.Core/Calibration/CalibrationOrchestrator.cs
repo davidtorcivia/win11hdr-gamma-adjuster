@@ -43,6 +43,14 @@ namespace HDRGammaController.Core.Calibration
         private readonly int _maxRetries;
         private readonly bool _hdrMode;
 
+        /// <summary>
+        /// When set, the orchestrator runs an in-session apply→verify→refine loop after the
+        /// native measurement pass: it builds a correction, loads it on the display, and
+        /// re-measures to confirm (and optionally refine) the result. Left null for a plain
+        /// measure-only calibration.
+        /// </summary>
+        public ClosedLoopConfig? ClosedLoop { get; set; }
+
         #endregion
 
         #region Events
@@ -76,6 +84,12 @@ namespace HDRGammaController.Core.Calibration
         /// Raised when calibration completes (success or failure).
         /// </summary>
         public event EventHandler<CalibrationResultEventArgs>? CalibrationCompleted;
+
+        /// <summary>
+        /// Raised with a short phase label during the closed-loop apply/verify/refine passes
+        /// (e.g. "Verifying: 4/16", "Refining (round 2): 1/16") for the UI to surface.
+        /// </summary>
+        public event EventHandler<string>? PhaseChanged;
 
         #endregion
 
@@ -216,10 +230,18 @@ namespace HDRGammaController.Core.Calibration
                 // in finally regardless of how the loop terminates.
                 await _colorimeterService.BeginMeasurementSessionAsync(_hdrMode, _cancellationTokenSource.Token);
 
+                ClosedLoopOutcome? closedLoop = null;
                 try
                 {
                     SetState(CalibrationState.Running);
                     await RunMeasurementLoopAsync(_cancellationTokenSource.Token);
+
+                    // In-session apply → verify → refine, while spotread is still connected.
+                    if (ClosedLoop != null && _state != CalibrationState.Cancelled && _measurements != null)
+                    {
+                        PhaseChanged?.Invoke(this, "Applying correction…");
+                        closedLoop = await RunClosedLoopAsync(_measurements, _cancellationTokenSource.Token);
+                    }
                 }
                 finally
                 {
@@ -243,13 +265,23 @@ namespace HDRGammaController.Core.Calibration
 
                 SetState(CalibrationState.Completed);
 
+                string msg = $"Calibration completed successfully. {_measurements.Count} patches measured in {FormatTime(_elapsedTimer.Elapsed)}.";
+                if (closedLoop.HasValue)
+                    msg += $" Grayscale dE {closedLoop.Value.NativeResidual:F2} → {closedLoop.Value.CorrectedResidual:F2} after {closedLoop.Value.Rounds} pass(es).";
+
                 var result = new CalibrationResult
                 {
                     Success = true,
                     Measurements = _measurements,
                     Target = _target,
                     TotalTime = _elapsedTimer.Elapsed,
-                    Message = $"Calibration completed successfully. {_measurements.Count} patches measured in {FormatTime(_elapsedTimer.Elapsed)}."
+                    Message = msg,
+                    ClosedLoopRan = closedLoop.HasValue,
+                    CorrectedMeasurements = closedLoop?.AfterMeasurements,
+                    FinalCorrection = closedLoop?.Correction,
+                    NativeResidualDeltaE = closedLoop?.NativeResidual,
+                    CorrectedResidualDeltaE = closedLoop?.CorrectedResidual,
+                    RefinementRounds = closedLoop?.Rounds ?? 0
                 };
 
                 CalibrationCompleted?.Invoke(this, new CalibrationResultEventArgs(result));
@@ -354,7 +386,6 @@ namespace HDRGammaController.Core.Calibration
                 }
 
                 var patch = _patches[_currentPatchIndex];
-                _retryCount = 0;
 
                 // Request patch display
                 DisplayPatchRequested?.Invoke(this, new DisplayPatchEventArgs(patch, _currentPatchIndex, _patches.Count));
@@ -364,60 +395,7 @@ namespace HDRGammaController.Core.Calibration
                 // fires after the measurement completes to advance the percentage.)
                 RaiseProgressChanged();
 
-                // Wait for display to settle
-                await Task.Delay(_settleTimeMs, cancellationToken);
-
-                // Take measurement with retry
-                MeasurementResult? measurement = null;
-                string? lastError = null;
-                while (_retryCount < _maxRetries)
-                {
-                    try
-                    {
-                        measurement = await _colorimeterService.MeasureAsync(patch, _hdrMode, cancellationToken);
-
-                        if (measurement.IsValid)
-                            break;
-
-                        lastError = measurement.ErrorMessage ?? "Unknown measurement error";
-                        _retryCount++;
-                        if (_retryCount < _maxRetries)
-                        {
-                            ErrorOccurred?.Invoke(this, new CalibrationErrorEventArgs(
-                                $"Measurement invalid: {lastError}. Retrying ({_retryCount}/{_maxRetries})...",
-                                patch, false));
-                            await Task.Delay(_settleTimeMs, cancellationToken); // Extra settle time on retry
-                        }
-                    }
-                    catch (UsbDriverException)
-                    {
-                        // Don't retry driver errors - they won't resolve without user action
-                        // Rethrow immediately so UI can offer driver installation
-                        throw;
-                    }
-                    catch (Exception ex)
-                    {
-                        lastError = ex.Message;
-                        _retryCount++;
-                        if (_retryCount >= _maxRetries)
-                        {
-                            throw new InvalidOperationException(
-                                $"Failed to measure patch {patch.Name} after {_maxRetries} attempts. Last error: {lastError}", ex);
-                        }
-
-                        ErrorOccurred?.Invoke(this, new CalibrationErrorEventArgs(
-                            $"Measurement error: {ex.Message}. Retrying ({_retryCount}/{_maxRetries})...",
-                            patch, false));
-                        await Task.Delay(_settleTimeMs * 2, cancellationToken); // Longer wait on error
-                    }
-                }
-
-                if (measurement == null || !measurement.IsValid)
-                {
-                    throw new InvalidOperationException(
-                        $"Failed to get valid measurement for patch {patch.Name} after {_maxRetries} attempts. " +
-                        $"Last error: {lastError ?? "No error details available"}");
-                }
+                var measurement = await MeasurePatchWithRetryAsync(patch, cancellationToken);
 
                 // Store measurement
                 _measurements!.Add(measurement);
@@ -427,6 +405,139 @@ namespace HDRGammaController.Core.Calibration
                 RaiseProgressChanged();
             }
         }
+
+        /// <summary>
+        /// Displays nothing new (caller handles display) and measures the patch with retry.
+        /// Shared by the main measurement loop and the closed-loop verification passes.
+        /// </summary>
+        private async Task<MeasurementResult> MeasurePatchWithRetryAsync(ColorPatch patch, CancellationToken cancellationToken)
+        {
+            _retryCount = 0;
+            await Task.Delay(_settleTimeMs, cancellationToken); // settle
+
+            MeasurementResult? measurement = null;
+            string? lastError = null;
+            while (_retryCount < _maxRetries)
+            {
+                try
+                {
+                    measurement = await _colorimeterService.MeasureAsync(patch, _hdrMode, cancellationToken);
+                    if (measurement.IsValid) break;
+
+                    lastError = measurement.ErrorMessage ?? "Unknown measurement error";
+                    _retryCount++;
+                    if (_retryCount < _maxRetries)
+                    {
+                        ErrorOccurred?.Invoke(this, new CalibrationErrorEventArgs(
+                            $"Measurement invalid: {lastError}. Retrying ({_retryCount}/{_maxRetries})...", patch, false));
+                        await Task.Delay(_settleTimeMs, cancellationToken);
+                    }
+                }
+                catch (UsbDriverException)
+                {
+                    throw; // never resolves without user action
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex.Message;
+                    _retryCount++;
+                    if (_retryCount >= _maxRetries)
+                        throw new InvalidOperationException(
+                            $"Failed to measure patch {patch.Name} after {_maxRetries} attempts. Last error: {lastError}", ex);
+
+                    ErrorOccurred?.Invoke(this, new CalibrationErrorEventArgs(
+                        $"Measurement error: {ex.Message}. Retrying ({_retryCount}/{_maxRetries})...", patch, false));
+                    await Task.Delay(_settleTimeMs * 2, cancellationToken);
+                }
+            }
+
+            if (measurement == null || !measurement.IsValid)
+                throw new InvalidOperationException(
+                    $"Failed to get valid measurement for patch {patch.Name} after {_maxRetries} attempts. " +
+                    $"Last error: {lastError ?? "No error details available"}");
+
+            return measurement;
+        }
+
+        /// <summary>
+        /// Measures a patch list (e.g. a grayscale verification ramp) within the open session,
+        /// displaying each patch and reporting progress against a phase label.
+        /// </summary>
+        private async Task<List<MeasurementResult>> MeasurePatchListAsync(
+            IReadOnlyList<ColorPatch> patches, string phaseLabel, CancellationToken cancellationToken)
+        {
+            var results = new List<MeasurementResult>(patches.Count);
+            for (int i = 0; i < patches.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var patch = patches[i];
+                DisplayPatchRequested?.Invoke(this, new DisplayPatchEventArgs(patch, i, patches.Count));
+                PhaseChanged?.Invoke(this, $"{phaseLabel}: {i + 1}/{patches.Count}");
+                results.Add(await MeasurePatchWithRetryAsync(patch, cancellationToken));
+            }
+            return results;
+        }
+
+        /// <summary>
+        /// Runs the apply→verify→refine loop after the native pass. Returns the final
+        /// correction plus before/after grayscale measurements for the report. Keeps the
+        /// best-scoring round so refinement can never produce a worse result than the initial.
+        /// </summary>
+        private async Task<ClosedLoopOutcome> RunClosedLoopAsync(
+            IReadOnlyList<MeasurementResult> nativeMeasurements, CancellationToken cancellationToken)
+        {
+            var cfg = ClosedLoop!;
+            var verifyPatches = cfg.VerificationPatches ?? GrayscalePatches();
+
+            double nativeResidual = cfg.Corrector.GrayscaleResidualDeltaE(nativeMeasurements);
+
+            var correction = cfg.Corrector.BuildInitialCorrection(nativeMeasurements);
+            cfg.Apply(correction);
+
+            var bestCorrection = correction;
+            var afterMeasurements = await MeasurePatchListAsync(verifyPatches, "Verifying", cancellationToken);
+            double bestResidual = cfg.Corrector.GrayscaleResidualDeltaE(afterMeasurements);
+            var bestAfter = afterMeasurements;
+            int roundsDone = 1;
+
+            for (int round = 1; round < Math.Max(1, cfg.MaxRefinementRounds) && bestResidual > cfg.TargetDeltaE; round++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                correction = cfg.Corrector.RefineCorrection(afterMeasurements, correction);
+                cfg.Apply(correction);
+                afterMeasurements = await MeasurePatchListAsync(verifyPatches, $"Refining (round {round + 1})", cancellationToken);
+                roundsDone++;
+
+                double residual = cfg.Corrector.GrayscaleResidualDeltaE(afterMeasurements);
+                if (residual < bestResidual)
+                {
+                    bestResidual = residual;
+                    bestCorrection = correction;
+                    bestAfter = afterMeasurements;
+                }
+            }
+
+            // Make sure the display ends on the best correction, not the last one tried.
+            cfg.Apply(bestCorrection);
+
+            return new ClosedLoopOutcome(bestCorrection, bestAfter, nativeResidual, bestResidual, roundsDone);
+        }
+
+        private IReadOnlyList<ColorPatch> GrayscalePatches()
+        {
+            var list = new List<ColorPatch>();
+            if (_patches != null)
+                foreach (var p in _patches)
+                    if (p.Category == PatchCategory.Grayscale) list.Add(p);
+            return list;
+        }
+
+        private readonly record struct ClosedLoopOutcome(
+            (double[] R, double[] G, double[] B) Correction,
+            List<MeasurementResult> AfterMeasurements,
+            double NativeResidual,
+            double CorrectedResidual,
+            int Rounds);
 
         /// <summary>
         /// Sets state with automatic locking. Use from methods that don't already hold _stateLock.
@@ -532,6 +643,28 @@ namespace HDRGammaController.Core.Calibration
     /// <summary>
     /// Result of a calibration run.
     /// </summary>
+    /// <summary>
+    /// Configuration for the in-session apply→verify→refine closed loop. The caller supplies
+    /// the corrector (color math), the display-apply action (VCGT), and the round budget.
+    /// </summary>
+    public sealed class ClosedLoopConfig
+    {
+        /// <summary>Builds and refines the correction from measurements.</summary>
+        public required ClosedLoopCorrector Corrector { get; init; }
+
+        /// <summary>Loads a candidate per-channel correction onto the display under test.</summary>
+        public required Action<(double[] R, double[] G, double[] B)> Apply { get; init; }
+
+        /// <summary>Max apply/verify passes (1 = apply + verify once; &gt;1 enables refinement).</summary>
+        public int MaxRefinementRounds { get; init; } = 1;
+
+        /// <summary>Stop refining once the grayscale residual drops to/below this dE.</summary>
+        public double TargetDeltaE { get; init; } = 1.0;
+
+        /// <summary>Patches to re-measure each verification pass; defaults to the grayscale subset.</summary>
+        public IReadOnlyList<ColorPatch>? VerificationPatches { get; init; }
+    }
+
     public class CalibrationResult
     {
         /// <summary>Whether calibration completed successfully.</summary>
@@ -554,6 +687,26 @@ namespace HDRGammaController.Core.Calibration
 
         /// <summary>Total calibration time.</summary>
         public TimeSpan TotalTime { get; init; }
+
+        // --- Closed-loop (apply + verify) results, present only when closed-loop ran ---
+
+        /// <summary>Whether the apply-and-verify closed loop ran.</summary>
+        public bool ClosedLoopRan { get; init; }
+
+        /// <summary>Grayscale verification measured WITH the final correction applied.</summary>
+        public IReadOnlyList<MeasurementResult>? CorrectedMeasurements { get; init; }
+
+        /// <summary>The final per-channel VCGT correction (1024-point signal→signal LUTs).</summary>
+        public (double[] R, double[] G, double[] B)? FinalCorrection { get; init; }
+
+        /// <summary>Mean grayscale dE before correction (native display).</summary>
+        public double? NativeResidualDeltaE { get; init; }
+
+        /// <summary>Mean grayscale dE after the final correction (the real "result").</summary>
+        public double? CorrectedResidualDeltaE { get; init; }
+
+        /// <summary>Number of refinement rounds actually performed.</summary>
+        public int RefinementRounds { get; init; }
     }
 
     #endregion

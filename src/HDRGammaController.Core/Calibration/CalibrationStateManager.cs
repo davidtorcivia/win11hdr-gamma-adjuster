@@ -87,6 +87,17 @@ namespace HDRGammaController.Core.Calibration
         }
 
         /// <summary>
+        /// Loads a raw per-channel correction onto the monitor under test. Used by the
+        /// closed loop to apply a candidate correction and re-measure it. No-op unless we're
+        /// in bypass mode (i.e. a calibration is in progress).
+        /// </summary>
+        public void ApplyCorrectionLut(MonitorInfo monitor, double[] r, double[] g, double[] b)
+        {
+            if (!_wasBypassActive) return;
+            _dispwinRunner.ApplyCorrectionLut(monitor, r, g, b);
+        }
+
+        /// <summary>
         /// Exits bypass mode and restores the previous correction state.
         /// Call this if calibration is cancelled or fails.
         /// </summary>
