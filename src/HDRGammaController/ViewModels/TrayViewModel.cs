@@ -346,6 +346,16 @@ namespace HDRGammaController.ViewModels
                     }
                 };
 
+                // When the calibration window closes, re-assert the correct live gamma through
+                // the apply path. This composes any freshly-installed MHC2 calibration with the
+                // user's gamma mode + night mode, and overwrites any leftover closed-loop
+                // correction the ramp guard might otherwise keep re-applying.
+                calibrationWindow.Closed += (s, e) =>
+                {
+                    _applyService.InvalidateAppliedState();
+                    ApplyAll();
+                };
+
                 calibrationWindow.Show();
             }
         }

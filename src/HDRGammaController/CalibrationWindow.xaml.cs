@@ -222,9 +222,13 @@ namespace HDRGammaController
                 _cancellationTokenSource?.Cancel();
             }
 
-            // If bypass was applied and we're closing without successful completion,
-            // restore the previous correction state
-            if (_bypassApplied && _stateManager != null && !_completedSuccessfully)
+            // Always restore the GPU gamma ramp on close when we entered bypass — including
+            // after a SUCCESSFUL calibration. The closed loop leaves its (possibly aggressive)
+            // candidate correction on the ramp and recorded in the apply-state, so the ramp
+            // guard would keep re-asserting it; this re-applies the user's real pre-calibration
+            // gamma and resumes night mode. If the user applied an MHC2 profile, the tray then
+            // re-asserts the correct MHC2-composed state on the window's Closed event.
+            if (_bypassApplied && _stateManager != null)
             {
                 try
                 {
