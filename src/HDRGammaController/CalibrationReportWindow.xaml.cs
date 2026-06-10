@@ -31,6 +31,22 @@ namespace HDRGammaController
         public void SetApplyContext(ApplyContext context) => _applyContext = context;
 
         /// <summary>
+        /// Shows the closed-loop before → after grayscale ΔE: how far off the panel measured
+        /// natively, and what it measured with the generated correction actually applied.
+        /// </summary>
+        public void SetBeforeAfter(double beforeDeltaE, double afterDeltaE, int refinementRounds)
+        {
+            BeforeDeltaEText.Text = $"{beforeDeltaE:F2}";
+            AfterDeltaEText.Text = $"{afterDeltaE:F2}";
+            SetDeltaEColor(BeforeDeltaEText, beforeDeltaE);
+            SetDeltaEColor(AfterDeltaEText, afterDeltaE);
+            BeforeAfterNoteText.Text = refinementRounds == 1
+                ? "(re-measured with correction applied, 1 pass)"
+                : $"(re-measured with correction applied, {refinementRounds} passes)";
+            BeforeAfterPanel.Visibility = Visibility.Visible;
+        }
+
+        /// <summary>
         /// Creates a new CalibrationReportWindow for displaying calibration results.
         /// </summary>
         /// <param name="profile">The calibration profile</param>

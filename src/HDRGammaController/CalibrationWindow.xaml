@@ -420,6 +420,8 @@
                               Foreground="White" IsChecked="True" Margin="0,4"/>
                     <CheckBox x:Name="SoundNotificationsCheck" Content="Play sound on completion"
                               Foreground="White" IsChecked="True" Margin="0,4"/>
+                    <CheckBox x:Name="CaptureSoundCheck" Content="Play sound on each capture"
+                              Foreground="White" IsChecked="True" Margin="0,4"/>
                 </StackPanel>
             </ScrollViewer>
 

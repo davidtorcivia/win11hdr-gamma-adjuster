@@ -208,6 +208,24 @@
                             </StackPanel>
                         </Grid>
 
+                        <!-- Closed-loop before → after (shown only when the verify passes ran) -->
+                        <Border x:Name="BeforeAfterPanel" Visibility="Collapsed"
+                                Background="#16261b" CornerRadius="6" Padding="12,10" Margin="0,14,0,0">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                <TextBlock Text="Grayscale ΔE " Style="{StaticResource MetricLabel}"
+                                           FontSize="14" VerticalAlignment="Center"/>
+                                <TextBlock Text="before" FontSize="12" Foreground="#909090" VerticalAlignment="Center" Margin="4,0,4,0"/>
+                                <TextBlock x:Name="BeforeDeltaEText" Text="0.00" Style="{StaticResource MetricValue}"
+                                           FontSize="22" VerticalAlignment="Center"/>
+                                <TextBlock Text="  →  " FontSize="22" Foreground="#a0a0a0" VerticalAlignment="Center"/>
+                                <TextBlock Text="after" FontSize="12" Foreground="#909090" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                <TextBlock x:Name="AfterDeltaEText" Text="0.00" Style="{StaticResource MetricValue}"
+                                           FontSize="22" FontWeight="Bold" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="BeforeAfterNoteText" Text="" FontSize="12" Foreground="#909090"
+                                           VerticalAlignment="Center" Margin="12,0,0,0"/>
+                            </StackPanel>
+                        </Border>
+
                         <TextBlock x:Name="SummaryText"
                                    Text="Calibration completed successfully."
                                    FontSize="13"

@@ -763,21 +763,16 @@ namespace HDRGammaController
                         }
 
                         ShowCompletion(true, detail);
-                    });
 
-                    if (SoundNotificationsCheck.IsChecked == true)
-                    {
-                        SystemSounds.Asterisk.Play();
-                    }
+                        if (SoundNotificationsCheck.IsChecked == true)
+                            CalibrationSounds.PlayCompletion();
+                    });
 
                     CalibrationCompleted?.Invoke(this, new CalibrationCompleteEventArgs(true, null));
                 }
                 else if (_calibrationResult.WasCancelled)
                 {
-                    Dispatcher.Invoke(() =>
-                    {
-                        ShowCompletion(false, "Calibration was cancelled");
-                    });
+                    Dispatcher.Invoke(ReturnToSetup);
                     CalibrationCancelled?.Invoke(this, EventArgs.Empty);
                 }
                 else
@@ -785,22 +780,17 @@ namespace HDRGammaController
                     Dispatcher.Invoke(() =>
                     {
                         ShowCompletion(false, $"Calibration failed: {_calibrationResult.Message}");
-                    });
 
-                    if (SoundNotificationsCheck.IsChecked == true)
-                    {
-                        SystemSounds.Hand.Play();
-                    }
+                        if (SoundNotificationsCheck.IsChecked == true)
+                            CalibrationSounds.PlayFailure();
+                    });
 
                     CalibrationCompleted?.Invoke(this, new CalibrationCompleteEventArgs(false, _calibrationResult.Message));
                 }
             }
             catch (OperationCanceledException)
             {
-                Dispatcher.Invoke(() =>
-                {
-                    ShowCompletion(false, "Calibration was cancelled");
-                });
+                Dispatcher.Invoke(ReturnToSetup);
                 CalibrationCancelled?.Invoke(this, EventArgs.Empty);
             }
             catch (UsbDriverException ex)
@@ -850,12 +840,10 @@ namespace HDRGammaController
                 Dispatcher.Invoke(() =>
                 {
                     ShowCompletion(false, $"Calibration failed: {ex.Message}");
-                });
 
-                if (SoundNotificationsCheck.IsChecked == true)
-                {
-                    SystemSounds.Hand.Play();
-                }
+                    if (SoundNotificationsCheck.IsChecked == true)
+                        CalibrationSounds.PlayFailure();
+                });
 
                 CalibrationCompleted?.Invoke(this, new CalibrationCompleteEventArgs(false, ex.Message));
             }
@@ -934,6 +922,8 @@ namespace HDRGammaController
             // Could update UI with measurement details if needed
             Dispatcher.Invoke(() =>
             {
+                if (CaptureSoundCheck.IsChecked == true)
+                    CalibrationSounds.PlayCapture();
                 // Optional: Show measurement info
             });
         }
@@ -1014,8 +1004,48 @@ namespace HDRGammaController
                 _isCancelled = true;
                 _orchestrator?.Cancel();
                 _cancellationTokenSource?.Cancel();
-                Close();
+                // Don't close: RunCalibrationAsync observes the cancellation and returns the
+                // user to the setup screen so they can adjust and restart.
             }
+        }
+
+        /// <summary>
+        /// After a cancelled run: restore the pre-calibration correction state and return to
+        /// the initial setup screen (instead of closing), so the user can tweak and restart.
+        /// </summary>
+        private void ReturnToSetup()
+        {
+            if (_bypassApplied && _stateManager != null)
+            {
+                try
+                {
+                    _stateManager.RestorePreviousState();
+                    _bypassApplied = false;
+                    Log.Info("CalibrationWindow: Restored previous state after cancel");
+                }
+                catch (Exception ex)
+                {
+                    Log.Info($"CalibrationWindow: Failed to restore state: {ex.Message}");
+                }
+            }
+
+            _isCancelled = false;
+            MeasurementPanel.Visibility = Visibility.Collapsed;
+            CompletionOverlay.Visibility = Visibility.Collapsed;
+            PauseOverlay.Visibility = Visibility.Collapsed;
+            PositioningPanel.Visibility = Visibility.Collapsed;
+            PositioningWindowedBanner.Visibility = Visibility.Collapsed;
+            WindowedModeBanner.Visibility = Visibility.Collapsed;
+            SetupPanel.Visibility = Visibility.Visible;
+
+            // Same window restore as PositioningBack_Click: original setup chrome.
+            ResizeMode = ResizeMode.CanResizeWithGrip;
+            WindowState = WindowState.Normal;
+            Width = 700;
+            Height = 700;
+            Topmost = false;
+            Left = (SystemParameters.PrimaryScreenWidth - Width) / 2;
+            Top = (SystemParameters.PrimaryScreenHeight - Height) / 2;
         }
 
         private void Cancel_Click(object sender, RoutedEventArgs e)
@@ -1150,6 +1180,13 @@ namespace HDRGammaController
 
             // Open the report window
             var reportWindow = new CalibrationReportWindow(profile, _calibrationMetrics, _displayCharacterization, _generatedLut);
+
+            // Closed-loop before/after: the real measured improvement, not just the native error.
+            if (_calibrationResult is { ClosedLoopRan: true,
+                    NativeResidualDeltaE: double beforeDe, CorrectedResidualDeltaE: double afterDe })
+            {
+                reportWindow.SetBeforeAfter(beforeDe, afterDe, _calibrationResult.RefinementRounds);
+            }
 
             // Give the report what it needs to install the calibration natively. Prefer the
             // closed-loop's final correction (verified on-screen); otherwise derive per-channel
@@ -1411,9 +1448,7 @@ namespace HDRGammaController
                 ShowCompletion(false, "USB driver installation required.\n\nInstall the ArgyllCMS USB drivers and try again.");
 
                 if (SoundNotificationsCheck.IsChecked == true)
-                {
-                    SystemSounds.Hand.Play();
-                }
+                    CalibrationSounds.PlayFailure();
 
                 CalibrationCompleted?.Invoke(this, new CalibrationCompleteEventArgs(false, "USB driver error"));
             }
