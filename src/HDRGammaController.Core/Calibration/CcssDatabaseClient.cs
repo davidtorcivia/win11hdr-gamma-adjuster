@@ -51,21 +51,28 @@ namespace HDRGammaController.Core.Calibration
             var types = type != null ? new[] { type } : new[] { "ccss", "ccmx" };
 
             var results = new List<Entry>();
+            Exception? lastError = null;
             foreach (string t in types)
             {
-                string url = $"{BaseUrl}?get=1&type={t}&display={Uri.EscapeDataString(pattern)}&json=1";
-                string body;
+                // instrument is REQUIRED for type=ccmx (the server answers 400 without it,
+                // since matrices are instrument-specific); harmless wildcard for ccss.
+                string url = $"{BaseUrl}?get=1&type={t}&display={Uri.EscapeDataString(pattern)}" +
+                             $"&instrument={Uri.EscapeDataString("*")}&json=1";
                 try
                 {
-                    body = await Http.GetStringAsync(url, cancellationToken);
+                    string body = await Http.GetStringAsync(url, cancellationToken);
+                    results.AddRange(Parse(body, t));
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
                 {
-                    throw new InvalidOperationException(
-                        $"Corrections database query failed ({ex.Message}). Check the internet connection.", ex);
+                    // One type failing must not kill the whole search.
+                    lastError = ex;
                 }
-                results.AddRange(Parse(body, t));
             }
+            if (results.Count == 0 && lastError != null)
+                throw new InvalidOperationException(
+                    $"Corrections database query failed ({lastError.Message}). Check the internet connection.", lastError);
             return results
                 .OrderByDescending(e => e.Created, StringComparer.Ordinal)
                 .ToList();

@@ -134,7 +134,7 @@ namespace HDRGammaController
         {
             _progress.Value = total > 0 ? current * 100.0 / total : 0;
             _patchInfo.Text = $"Patch {current} of {total}";
-            _phase.Text = $"Verifying — {patchName}";
+            _phase.Text = $"Verifying - {patchName}";
         }
     }
 }

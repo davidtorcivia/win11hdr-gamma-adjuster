@@ -28,7 +28,7 @@ namespace HDRGammaController
         public CcssBrowserWindow(string initialQuery, string saveFolder)
         {
             _saveFolder = saveFolder;
-            Title = "Find Meter Correction — DisplayCAL Community Database";
+            Title = "Find Meter Correction - DisplayCAL Community Database";
             Width = 760;
             Height = 520;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
