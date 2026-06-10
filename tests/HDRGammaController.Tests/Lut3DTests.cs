@@ -70,6 +70,30 @@ namespace HDRGammaController.Tests
             Assert.Throws<InvalidOperationException>(() => gen.Generate());
         }
 
+        [Theory]
+        [InlineData(2.2)]
+        [InlineData(2.4)]
+        [InlineData(1.8)]
+        public void MeasuredGamma_LeastSquaresFit_RecoversTrueGamma(double trueGamma)
+        {
+            // Synthesize a perfect power-law grayscale: Y = signal^gamma, scaled to nits.
+            // The least-squares fit should recover the gamma within tight tolerance.
+            var list = new List<MeasurementResult>();
+            for (int i = 0; i <= 16; i++)
+            {
+                double s = i / 16.0;
+                double Y = 120.0 * Math.Pow(s, trueGamma);
+                list.Add(Meas(s, s, s, Y));
+            }
+
+            var gen = new Lut3DGenerator(StandardTargets.SrgbGamma22, list);
+            gen.Generate();
+            Assert.NotNull(gen.Characterization);
+            // Least-squares should recover the true gamma to within ~0.05.
+            Assert.True(Math.Abs(gen.Characterization!.MeasuredGamma - trueGamma) < 0.05,
+                $"Expected gamma ~{trueGamma}, got {gen.Characterization.MeasuredGamma:F3}");
+        }
+
         #endregion
 
         #region Lut3D Basic Tests

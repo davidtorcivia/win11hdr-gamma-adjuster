@@ -272,23 +272,36 @@ namespace HDRGammaController.Core.Calibration
 
             double luminanceRange = Math.Max(whiteLuminance - blackLuminance, 1e-6);
 
-            // Calculate gamma for each grayscale point and average
-            var gammas = new List<double>();
+            // Least-squares fit of gamma in log-log space. For a power law
+            // output = input^gamma, taking logs gives ln(output) = gamma * ln(input),
+            // a line through the origin whose best-fit slope is
+            //   gamma = Σ(ln in * ln out) / Σ(ln in)^2.
+            // This weights all points jointly instead of averaging per-point gamma
+            // estimates (which over-weights the noisy near-black samples where small
+            // luminance errors swing the ratio wildly).
+            double sumXY = 0, sumXX = 0;
+            int n = 0;
             foreach (var m in grayscale)
             {
                 double input = m.Patch.DisplayRgb.R;
-                double output = (m.Xyz.Y - blackLuminance) / luminanceRange;
-                output = Math.Clamp(output, 0, 1);
+                double output = Math.Clamp((m.Xyz.Y - blackLuminance) / luminanceRange, 0, 1);
 
                 if (output > 0 && input > 0)
                 {
-                    double gamma = Math.Log(output) / Math.Log(input);
-                    if (gamma > 1.5 && gamma < 3.5) // Sanity check
-                        gammas.Add(gamma);
+                    double lx = Math.Log(input);
+                    double ly = Math.Log(output);
+                    sumXY += lx * ly;
+                    sumXX += lx * lx;
+                    n++;
                 }
             }
 
-            return gammas.Count > 0 ? gammas.Average() : 2.2;
+            if (n == 0 || sumXX <= 0) return 2.2;
+
+            double gamma = sumXY / sumXX;
+            // Clamp to a physically-plausible display range; outside it the fit is
+            // dominated by bad data and the 2.2 default is safer.
+            return (gamma > 1.5 && gamma < 3.5) ? gamma : 2.2;
         }
 
         /// <summary>
