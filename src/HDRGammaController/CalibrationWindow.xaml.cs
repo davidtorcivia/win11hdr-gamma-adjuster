@@ -1179,7 +1179,9 @@ namespace HDRGammaController
             }
 
             // Open the report window
-            var reportWindow = new CalibrationReportWindow(profile, _calibrationMetrics, _displayCharacterization, _generatedLut);
+            var reportWindow = new CalibrationReportWindow(
+                profile, _calibrationMetrics, _displayCharacterization, _generatedLut,
+                _calibrationResult?.Measurements);
 
             // Closed-loop before/after: the real measured improvement, not just the native error.
             if (_calibrationResult is { ClosedLoopRan: true,
@@ -1215,7 +1217,8 @@ namespace HDRGammaController
                         // mode on top of it instead of double-applying the gamma curve.
                         _settingsManager?.SetMhc2Calibration(monitor.MonitorDevicePath, profileName);
                         Log.Info($"CalibrationWindow: Installed + recorded calibration profile {profileName}");
-                    }));
+                    },
+                    Colorimeter: _colorimeterService));
             }
 
             reportWindow.Show();

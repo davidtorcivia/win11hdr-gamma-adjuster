@@ -403,60 +403,12 @@ namespace HDRGammaController.Core.Calibration
         }
 
         /// <summary>
-        /// Calculates verification metrics by comparing measured values to target.
+        /// Calculates verification metrics by comparing measured values to target. Shares its
+        /// math (including the absolute→normalized luminance handling) with the post-apply
+        /// verify pass, so the report's before and after numbers are directly comparable.
         /// </summary>
-        public CalibrationMetrics CalculateMetrics()
-        {
-            var metrics = new CalibrationMetrics();
-            var deltaEs = new List<double>();
-
-            var valid = _measurements.Where(m => m.IsValid).ToList();
-
-            // The colorimeter returns ABSOLUTE luminance (white Y ≈ 100–120 cd/m²), but the
-            // patch targets are normalized to white Y = 1. Taking Lab on raw absolute XYZ pushes
-            // L* into the hundreds (white → L* ≈ 559) and makes ΔE meaningless — that is the
-            // "ΔE 90+" artifact. Normalize measured XYZ so the brightest patch (white) maps to
-            // Y = 1, matching the target scale, exactly as CalibrationReport.CalculateDeltaEStats
-            // does. The white-point error then shows up correctly as an a*/b* deviation.
-            double peakY = valid.Count > 0 ? valid.Max(m => m.Xyz.Y) : 1.0;
-            if (peakY <= 0) peakY = 1.0;
-
-            foreach (var measurement in valid)
-            {
-                var targetXyz = CalculateTargetXyz(measurement.Patch.DisplayRgb);
-                var targetLab = ColorMath.XyzToLab(targetXyz);
-                var normalized = new CieXyz(measurement.Xyz.X / peakY, measurement.Xyz.Y / peakY, measurement.Xyz.Z / peakY);
-                var measuredLab = ColorMath.XyzToLab(normalized);
-
-                double deltaE = measuredLab.DeltaE2000(targetLab);
-                deltaEs.Add(deltaE);
-
-                if (measurement.Patch.Category == PatchCategory.Grayscale)
-                    metrics.GrayscaleDeltaEs.Add(deltaE);
-                else if (measurement.Patch.Category == PatchCategory.Primary)
-                    metrics.PrimaryDeltaEs.Add(deltaE);
-            }
-
-            if (deltaEs.Count > 0)
-            {
-                metrics.AverageDeltaE = deltaEs.Average();
-                metrics.MaxDeltaE = deltaEs.Max();
-                metrics.MinDeltaE = deltaEs.Min();
-                metrics.MedianDeltaE = GetMedian(deltaEs);
-            }
-
-            return metrics;
-        }
-
-        private static double GetMedian(List<double> values)
-        {
-            if (values.Count == 0) return 0;
-            var sorted = values.OrderBy(v => v).ToList();
-            int mid = sorted.Count / 2;
-            return sorted.Count % 2 == 0
-                ? (sorted[mid - 1] + sorted[mid]) / 2
-                : sorted[mid];
-        }
+        public CalibrationMetrics CalculateMetrics() =>
+            CalibrationVerifier.ComputeMetrics(_measurements, _target);
     }
 
     /// <summary>

@@ -5,8 +5,8 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         Title="Calibration Report"
-        Width="900" Height="700"
-        MinWidth="700" MinHeight="500"
+        Width="960" Height="860"
+        MinWidth="820" MinHeight="560"
         WindowStartupLocation="CenterScreen"
         Background="#1e1e1e"
         Foreground="#e0e0e0">
@@ -91,7 +91,7 @@
         </Style>
 
         <Style x:Key="GradeText" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="44"/>
+            <Setter Property="FontSize" Value="36"/>
             <Setter Property="FontWeight" Value="Bold"/>
             <Setter Property="HorizontalAlignment" Value="Center"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
@@ -159,72 +159,65 @@
                 </StackPanel>
 
                 <!-- Grade Display (the letter in a colored disc is self-evidently a grade) -->
-                <Border Grid.Column="1" Width="100" Height="100" CornerRadius="50" x:Name="GradeBorder" Background="#164e63">
-                    <TextBlock x:Name="GradeText" Style="{StaticResource GradeText}" Foreground="#22d3ee"/>
-                </Border>
+                <StackPanel Grid.Column="1" Margin="0,0,8,0">
+                    <Border Width="84" Height="84" CornerRadius="42" x:Name="GradeBorder" Background="#164e63">
+                        <TextBlock x:Name="GradeText" Style="{StaticResource GradeText}" Foreground="#22d3ee"/>
+                    </Border>
+                    <TextBlock x:Name="GradeScopeText" Text="uncorrected panel" FontSize="10" Foreground="#808080"
+                               HorizontalAlignment="Center" Margin="0,4,0,0"/>
+                </StackPanel>
             </Grid>
         </Border>
 
         <!-- Main Content -->
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="20">
             <StackPanel>
-                <!-- Summary Section -->
+                <!-- Summary Section: before/after accuracy table -->
                 <Border Style="{StaticResource CardBorder}">
                     <StackPanel>
-                        <TextBlock Text="Measured Display Deviation" Style="{StaticResource SectionHeader}"/>
-                        <TextBlock Text="How far your display reads from the target before correction. The generated LUT is built to cancel this — higher numbers mean more to correct, not a failed calibration."
+                        <TextBlock Text="Accuracy (ΔE2000)" Style="{StaticResource SectionHeader}"/>
+                        <TextBlock Text="Native = the uncorrected panel, measured during calibration. After = re-measured through the applied profile — click Apply Profile, then Verify."
                                    FontSize="12" Foreground="#909090" TextWrapping="Wrap" Margin="0,-4,0,12"/>
 
                         <Grid>
                             <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="170"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
 
-                            <!-- Average Delta E -->
-                            <StackPanel Grid.Column="0" HorizontalAlignment="Center">
-                                <TextBlock Text="Average Delta E" Style="{StaticResource MetricLabel}" HorizontalAlignment="Center"/>
-                                <TextBlock x:Name="AvgDeltaEText" Text="0.00" Style="{StaticResource MetricValue}" FontSize="28" HorizontalAlignment="Center"/>
-                            </StackPanel>
+                            <!-- Column headers -->
+                            <TextBlock Grid.Row="0" Grid.Column="1" Text="Average" Style="{StaticResource MetricLabel}" HorizontalAlignment="Center"/>
+                            <TextBlock Grid.Row="0" Grid.Column="2" Text="Max" Style="{StaticResource MetricLabel}" HorizontalAlignment="Center"/>
+                            <TextBlock Grid.Row="0" Grid.Column="3" Text="Grayscale" Style="{StaticResource MetricLabel}" HorizontalAlignment="Center"/>
+                            <TextBlock Grid.Row="0" Grid.Column="4" Text="Primaries" Style="{StaticResource MetricLabel}" HorizontalAlignment="Center"/>
 
-                            <!-- Max Delta E -->
-                            <StackPanel Grid.Column="1" HorizontalAlignment="Center">
-                                <TextBlock Text="Max Delta E" Style="{StaticResource MetricLabel}" HorizontalAlignment="Center"/>
-                                <TextBlock x:Name="MaxDeltaEText" Text="0.00" Style="{StaticResource MetricValue}" FontSize="28" HorizontalAlignment="Center"/>
-                            </StackPanel>
+                            <!-- Before: native panel -->
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Native (before)" Style="{StaticResource MetricLabel}" FontSize="13" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Row="1" Grid.Column="1" x:Name="AvgDeltaEText" Text="—" Style="{StaticResource MetricValue}" FontSize="22" HorizontalAlignment="Center"/>
+                            <TextBlock Grid.Row="1" Grid.Column="2" x:Name="MaxDeltaEText" Text="—" Style="{StaticResource MetricValue}" FontSize="22" HorizontalAlignment="Center"/>
+                            <TextBlock Grid.Row="1" Grid.Column="3" x:Name="GrayscaleDeltaEText" Text="—" Style="{StaticResource MetricValue}" FontSize="22" HorizontalAlignment="Center"/>
+                            <TextBlock Grid.Row="1" Grid.Column="4" x:Name="PrimaryDeltaEText" Text="—" Style="{StaticResource MetricValue}" FontSize="22" HorizontalAlignment="Center"/>
 
-                            <!-- Grayscale Delta E -->
-                            <StackPanel Grid.Column="2" HorizontalAlignment="Center">
-                                <TextBlock Text="Grayscale Avg" Style="{StaticResource MetricLabel}" HorizontalAlignment="Center"/>
-                                <TextBlock x:Name="GrayscaleDeltaEText" Text="0.00" Style="{StaticResource MetricValue}" FontSize="28" HorizontalAlignment="Center"/>
-                            </StackPanel>
-
-                            <!-- Primary Delta E -->
-                            <StackPanel Grid.Column="3" HorizontalAlignment="Center">
-                                <TextBlock Text="Primary Avg" Style="{StaticResource MetricLabel}" HorizontalAlignment="Center"/>
-                                <TextBlock x:Name="PrimaryDeltaEText" Text="0.00" Style="{StaticResource MetricValue}" FontSize="28" HorizontalAlignment="Center"/>
-                            </StackPanel>
+                            <!-- After: re-measured through the applied correction -->
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="Calibrated (after)" Style="{StaticResource MetricLabel}" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Row="2" Grid.Column="1" x:Name="AfterAvgText" Text="—" Style="{StaticResource MetricValue}" FontSize="22" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <TextBlock Grid.Row="2" Grid.Column="2" x:Name="AfterMaxText" Text="—" Style="{StaticResource MetricValue}" FontSize="22" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <TextBlock Grid.Row="2" Grid.Column="3" x:Name="AfterGrayscaleText" Text="—" Style="{StaticResource MetricValue}" FontSize="22" FontWeight="Bold" HorizontalAlignment="Center"/>
+                            <TextBlock Grid.Row="2" Grid.Column="4" x:Name="AfterPrimaryText" Text="—" Style="{StaticResource MetricValue}" FontSize="22" FontWeight="Bold" HorizontalAlignment="Center"/>
                         </Grid>
 
-                        <!-- Closed-loop before → after (shown only when the verify passes ran) -->
-                        <Border x:Name="BeforeAfterPanel" Visibility="Collapsed"
-                                Background="#16261b" CornerRadius="6" Padding="12,10" Margin="0,14,0,0">
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                                <TextBlock Text="Grayscale ΔE " Style="{StaticResource MetricLabel}"
-                                           FontSize="14" VerticalAlignment="Center"/>
-                                <TextBlock Text="before" FontSize="12" Foreground="#909090" VerticalAlignment="Center" Margin="4,0,4,0"/>
-                                <TextBlock x:Name="BeforeDeltaEText" Text="0.00" Style="{StaticResource MetricValue}"
-                                           FontSize="22" VerticalAlignment="Center"/>
-                                <TextBlock Text="  →  " FontSize="22" Foreground="#a0a0a0" VerticalAlignment="Center"/>
-                                <TextBlock Text="after" FontSize="12" Foreground="#909090" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                                <TextBlock x:Name="AfterDeltaEText" Text="0.00" Style="{StaticResource MetricValue}"
-                                           FontSize="22" FontWeight="Bold" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="BeforeAfterNoteText" Text="" FontSize="12" Foreground="#909090"
-                                           VerticalAlignment="Center" Margin="12,0,0,0"/>
-                            </StackPanel>
-                        </Border>
+                        <!-- Closed-loop grey-ramp refinement note (a different, narrower metric than
+                             the table: 1D grey-axis tracking only, measured during calibration) -->
+                        <TextBlock x:Name="BeforeAfterNoteText" Visibility="Collapsed"
+                                   FontSize="12" Foreground="#909090" TextWrapping="Wrap" Margin="0,10,0,0"/>
 
                         <TextBlock x:Name="SummaryText"
                                    Text="Calibration completed successfully."
@@ -474,6 +467,7 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
                 <TextBlock Grid.Column="0" x:Name="StatusText"
@@ -497,6 +491,14 @@
                         Click="ApplyButton_Click"/>
 
                 <Button Grid.Column="3"
+                        x:Name="VerifyButton"
+                        Content="Verify"
+                        ToolTip="Re-measure a quick patch sweep through the applied profile to fill in the 'after' numbers. Place the probe on the display first."
+                        Style="{StaticResource SecondaryButton}"
+                        Margin="0,0,10,0"
+                        Click="VerifyButton_Click"/>
+
+                <Button Grid.Column="4"
                         x:Name="CloseButton"
                         Content="Close"
                         Style="{StaticResource SecondaryButton}"

@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Media;
 using HDRGammaController.Core;
@@ -19,31 +21,33 @@ namespace HDRGammaController
         private readonly CalibrationMetrics? _metrics;
         private readonly DisplayCharacterization? _characterization;
         private readonly Lut3D? _correctionLut;
+        private readonly IReadOnlyList<MeasurementResult>? _measurements;
 
-        // Everything needed to install the calibration as a native Windows MHC2 profile.
-        // Set by the calibration window; when present, "Apply Profile" does the real install.
+        // Everything needed to install the calibration as a native Windows MHC2 profile and
+        // to verify it afterwards. Set by the calibration window; when present, "Apply
+        // Profile" does the real install and "Verify" can re-measure through it.
         public sealed record ApplyContext(
             MonitorInfo Monitor, CalibrationTarget Target,
             double[] LutR, double[] LutG, double[] LutB, double WhiteLevel,
-            Action<string>? OnInstalled);
+            Action<string>? OnInstalled, ColorimeterService? Colorimeter = null);
         private ApplyContext? _applyContext;
+        private bool _profileApplied;
 
         public void SetApplyContext(ApplyContext context) => _applyContext = context;
 
         /// <summary>
-        /// Shows the closed-loop before → after grayscale ΔE: how far off the panel measured
-        /// natively, and what it measured with the generated correction actually applied.
+        /// Notes the closed-loop grey-ramp refinement result. This is a much narrower metric
+        /// than the accuracy table (1D grey-axis tracking only, measured during calibration
+        /// against the GPU-ramp candidate — not through the MHC2 profile), so it's shown as a
+        /// footnote rather than as "the" before/after.
         /// </summary>
         public void SetBeforeAfter(double beforeDeltaE, double afterDeltaE, int refinementRounds)
         {
-            BeforeDeltaEText.Text = $"{beforeDeltaE:F2}";
-            AfterDeltaEText.Text = $"{afterDeltaE:F2}";
-            SetDeltaEColor(BeforeDeltaEText, beforeDeltaE);
-            SetDeltaEColor(AfterDeltaEText, afterDeltaE);
-            BeforeAfterNoteText.Text = refinementRounds == 1
-                ? "(re-measured with correction applied, 1 pass)"
-                : $"(re-measured with correction applied, {refinementRounds} passes)";
-            BeforeAfterPanel.Visibility = Visibility.Visible;
+            BeforeAfterNoteText.Text =
+                $"Grey-ramp refinement during calibration: grey-axis tracking {beforeDeltaE:F2} → {afterDeltaE:F2} " +
+                $"ΔE after {refinementRounds} pass(es). This 1D check excludes the white-point and gamut " +
+                "correction — use Verify above for the full after numbers.";
+            BeforeAfterNoteText.Visibility = Visibility.Visible;
         }
 
         /// <summary>
@@ -57,7 +61,8 @@ namespace HDRGammaController
             CalibrationProfile profile,
             CalibrationMetrics? metrics = null,
             DisplayCharacterization? characterization = null,
-            Lut3D? correctionLut = null)
+            Lut3D? correctionLut = null,
+            IReadOnlyList<MeasurementResult>? measurements = null)
         {
             InitializeComponent();
             WindowTheme.UseDarkTitleBar(this);
@@ -66,6 +71,7 @@ namespace HDRGammaController
             _metrics = metrics;
             _characterization = characterization;
             _correctionLut = correctionLut;
+            _measurements = measurements;
 
             PopulateReport();
 
@@ -408,50 +414,106 @@ namespace HDRGammaController
             double MeasuredOut(ToneCurve? curve, double v) => curve?.Lookup(v) ?? v;
             double TargetOut(double v) => target?.ApplyEotf(v) ?? Math.Pow(v, targetGamma);
 
-            // 1. Per-channel tone response vs target.
+            // The raw measured grayscale steps (when available): the fitted curve plus real
+            // data points, instead of a model line pretending to be measurements.
+            var grays = _measurements?
+                .Where(m => m.IsValid && m.Patch.Category == PatchCategory.Grayscale)
+                .OrderBy(m => m.Patch.DisplayRgb.R)
+                .ToList();
+            double grayMinY = 0, grayRangeY = 1;
+            if (grays is { Count: > 1 })
+            {
+                grayMinY = grays.Min(m => m.Xyz.Y);
+                grayRangeY = Math.Max(grays.Max(m => m.Xyz.Y) - grayMinY, 1e-6);
+            }
+            double NormY(MeasurementResult m) => Math.Clamp((m.Xyz.Y - grayMinY) / grayRangeY, 0, 1);
+
+            // 1. Tone response: target, fitted curve, and the measured points. (The per-channel
+            // tone curves are all fitted from the same grayscale luminance, so a single fit
+            // line is honest — per-channel behavior lives in the RGB balance chart.)
             var tRef = new List<(double, double)>();
-            var tr = new List<(double, double)>(); var tg = new List<(double, double)>(); var tb = new List<(double, double)>();
+            var tFit = new List<(double, double)>();
             for (int i = 0; i < N; i++)
             {
                 double v = i / (N - 1.0);
                 tRef.Add((v, TargetOut(v)));
-                tr.Add((v, MeasuredOut(_characterization.RedToneCurve, v)));
-                tg.Add((v, MeasuredOut(_characterization.GreenToneCurve, v)));
-                tb.Add((v, MeasuredOut(_characterization.BlueToneCurve, v)));
+                tFit.Add((v, MeasuredOut(_characterization.RedToneCurve, v)));
             }
-            CalibrationCharts.DrawLineChart(ToneCanvas, new[]
+            var toneSeries = new List<CalibrationCharts.Series>
             {
-                new CalibrationCharts.Series("Target", CGrey, tRef, Dashed: true),
-                new CalibrationCharts.Series("R", CR, tr),
-                new CalibrationCharts.Series("G", CG, tg),
-                new CalibrationCharts.Series("B", CB, tb),
-            }, 0, 1, 0, 1, "Input signal", "Output");
+                new("Target", CGrey, tRef, Dashed: true),
+                new("Panel (fit)", Color.FromRgb(0x22, 0xd3, 0xee), tFit),
+            };
+            if (grays is { Count: > 1 })
+                toneSeries.Add(new CalibrationCharts.Series("Measured", Color.FromRgb(0xf9, 0x73, 0x16),
+                    grays.Select(m => (m.Patch.DisplayRgb.R, NormY(m))).ToList(), Scatter: true));
+            CalibrationCharts.DrawLineChart(ToneCanvas, toneSeries, 0, 1, 0, 1, "Input signal", "Output");
 
-            // 2. Gamma tracking (grey average) vs the flat target gamma.
+            // 2. Gamma tracking (fit line + per-point measured gamma) vs the flat target gamma.
             var gammaMeas = new List<(double, double)>();
             var gammaRef = new List<(double, double)>();
             for (int i = 1; i < N; i++)
             {
                 double v = i / (N - 1.0);
-                double outv = (MeasuredOut(_characterization.RedToneCurve, v) +
-                               MeasuredOut(_characterization.GreenToneCurve, v) +
-                               MeasuredOut(_characterization.BlueToneCurve, v)) / 3.0;
+                double outv = MeasuredOut(_characterization.RedToneCurve, v);
                 gammaRef.Add((v, targetGamma));
-                if (v > 0 && outv > 0) gammaMeas.Add((v, Math.Log(outv) / Math.Log(v)));
+                if (v > 0 && v < 1 && outv > 0) gammaMeas.Add((v, Math.Log(outv) / Math.Log(v)));
             }
-            CalibrationCharts.DrawLineChart(GammaCanvas, new[]
+            var gammaSeries = new List<CalibrationCharts.Series>
             {
-                new CalibrationCharts.Series($"Target {targetGamma:0.0}", CGrey, gammaRef, Dashed: true),
-                new CalibrationCharts.Series("Measured", Color.FromRgb(0x22, 0xd3, 0xee), gammaMeas),
-            }, 0, 1, 1.6, 2.8, "Input signal", "Gamma");
+                new($"Target {targetGamma:0.0}", CGrey, gammaRef, Dashed: true),
+                new("Fit", Color.FromRgb(0x22, 0xd3, 0xee), gammaMeas),
+            };
+            if (grays is { Count: > 1 })
+            {
+                var gammaPts = grays
+                    .Where(m => m.Patch.DisplayRgb.R is >= 0.05 and <= 0.95 && NormY(m) > 0)
+                    .Select(m => (m.Patch.DisplayRgb.R, Math.Log(NormY(m)) / Math.Log(m.Patch.DisplayRgb.R)))
+                    .ToList();
+                gammaSeries.Add(new CalibrationCharts.Series("Measured", Color.FromRgb(0xf9, 0x73, 0x16),
+                    gammaPts, Scatter: true));
+            }
+            CalibrationCharts.DrawLineChart(GammaCanvas, gammaSeries, 0, 1, 1.6, 2.8, "Input signal", "Gamma");
 
-            // 3. Grayscale RGB balance (per-channel response — shows color cast across the ramp).
-            CalibrationCharts.DrawLineChart(BalanceCanvas, new[]
+            // 3. Grayscale RGB balance from the MEASURED XYZ of each gray step: each channel's
+            // linear contribution relative to neutral (1.0 = no cast). The old version plotted
+            // the three fitted tone curves, which are identical by construction — they overlap
+            // exactly and only the last-drawn series was visible.
+            var balanceSeries = new List<CalibrationCharts.Series>
             {
-                new CalibrationCharts.Series("R", CR, tr),
-                new CalibrationCharts.Series("G", CG, tg),
-                new CalibrationCharts.Series("B", CB, tb),
-            }, 0, 1, 0, 1, "Input signal", "Channel");
+                new("Neutral", CGrey, new List<(double, double)> { (0, 1), (1, 1) }, Dashed: true),
+            };
+            if (grays is { Count: > 1 } && _characterization.RgbToXyzMatrix != null)
+            {
+                var inv = ColorMath.Invert3x3(_characterization.RgbToXyzMatrix);
+                double[] ChannelLin(MeasurementResult m) => new[]
+                {
+                    inv[0, 0] * m.Xyz.X + inv[0, 1] * m.Xyz.Y + inv[0, 2] * m.Xyz.Z,
+                    inv[1, 0] * m.Xyz.X + inv[1, 1] * m.Xyz.Y + inv[1, 2] * m.Xyz.Z,
+                    inv[2, 0] * m.Xyz.X + inv[2, 1] * m.Xyz.Y + inv[2, 2] * m.Xyz.Z,
+                };
+                var white = grays.OrderByDescending(m => m.Xyz.Y).First();
+                double[] whiteLin = ChannelLin(white);
+                var balR = new List<(double, double)>(); var balG = new List<(double, double)>(); var balB = new List<(double, double)>();
+                foreach (var m in grays.Where(m => m.Patch.DisplayRgb.R >= 0.08))
+                {
+                    double[] lin = ChannelLin(m);
+                    if (whiteLin.Any(w => w <= 1e-6)) continue;
+                    double r = lin[0] / whiteLin[0], g = lin[1] / whiteLin[1], b = lin[2] / whiteLin[2];
+                    double avg = (r + g + b) / 3.0;
+                    if (avg <= 1e-5) continue;
+                    double v = m.Patch.DisplayRgb.R;
+                    balR.Add((v, r / avg)); balG.Add((v, g / avg)); balB.Add((v, b / avg));
+                }
+                balanceSeries.Add(new CalibrationCharts.Series("R", CR, balR));
+                balanceSeries.Add(new CalibrationCharts.Series("", CR, balR, Scatter: true));
+                balanceSeries.Add(new CalibrationCharts.Series("G", CG, balG));
+                balanceSeries.Add(new CalibrationCharts.Series("", CG, balG, Scatter: true));
+                balanceSeries.Add(new CalibrationCharts.Series("B", CB, balB));
+                balanceSeries.Add(new CalibrationCharts.Series("", CB, balB, Scatter: true));
+            }
+            CalibrationCharts.DrawLineChart(BalanceCanvas, balanceSeries,
+                0, 1, 0.85, 1.15, "Input signal", "Balance");
 
             // 4. Gamut + white point on CIE xy.
             if (target != null)
@@ -491,6 +553,7 @@ namespace HDRGammaController
                     // through cleanly (no leftover gamma curve doubling it). Night mode resumes
                     // on its next tick via the apply path's MHC2-aware composition.
                     NativeGammaRamp.TryClear(ctx.Monitor.DeviceName);
+                    _profileApplied = true;
                     ctx.OnInstalled?.Invoke(result.ProfileName);
                     MessageBox.Show(
                         "Calibration applied.\n\n" +
@@ -514,6 +577,89 @@ namespace HDRGammaController
         private void CloseButton_Click(object sender, RoutedEventArgs e)
         {
             Close();
+        }
+
+        /// <summary>
+        /// Re-measures a quick patch sweep THROUGH whatever Windows is currently applying
+        /// (normally the just-installed profile) and fills in the "after" row of the accuracy
+        /// table — the honest, measured counterpart to the native "before" numbers.
+        /// </summary>
+        private async void VerifyButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_applyContext?.Colorimeter is not { } colorimeter || _applyContext is not { } ctx)
+            {
+                MessageBox.Show(
+                    "Verification isn't available for this report (no colorimeter context). " +
+                    "Run it from the report that opens right after a calibration.",
+                    "Verify Calibration", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            string prompt = _profileApplied
+                ? "Place the probe on the display, then press Yes to start.\n\n" +
+                  "Tip: turn night mode off while verifying — it tints the measurements."
+                : "The profile hasn't been applied from this window yet, so Verify will measure " +
+                  "whatever is currently active on the display.\n\n" +
+                  "Place the probe on the display, then press Yes to start.";
+            if (MessageBox.Show(prompt, "Verify Calibration", MessageBoxButton.YesNo,
+                    MessageBoxImage.Question) != MessageBoxResult.Yes)
+                return;
+
+            VerifyButton.IsEnabled = false;
+            ApplyButton.IsEnabled = false;
+            CloseButton.IsEnabled = false;
+            PatchDisplayWindow? patchWindow = null;
+            try
+            {
+                patchWindow = new PatchDisplayWindow(ctx.Monitor);
+                patchWindow.Show();
+
+                var patches = CalibrationVerifier.BuildVerificationPatches();
+                var results = new List<MeasurementResult>();
+                await colorimeter.BeginMeasurementSessionAsync(hdrMode: false);
+                for (int i = 0; i < patches.Count; i++)
+                {
+                    var p = patches[i];
+                    VerifyButton.Content = $"Verifying {i + 1}/{patches.Count}…";
+                    patchWindow.SetColor(p.DisplayRgb.R, p.DisplayRgb.G, p.DisplayRgb.B);
+                    await Task.Delay(i == 0 ? 1200 : 500); // settle (longer for the first patch)
+                    results.Add(await colorimeter.MeasureAsync(p));
+                }
+
+                var after = CalibrationVerifier.ComputeMetrics(results, ctx.Target);
+                AfterAvgText.Text = $"{after.AverageDeltaE:F2}";
+                AfterMaxText.Text = $"{after.MaxDeltaE:F2}";
+                AfterGrayscaleText.Text = $"{after.AverageGrayscaleDeltaE:F2}";
+                AfterPrimaryText.Text = $"{after.AveragePrimaryDeltaE:F2}";
+                SetDeltaEColor(AfterAvgText, after.AverageDeltaE);
+                SetDeltaEColor(AfterMaxText, after.MaxDeltaE);
+                SetDeltaEColor(AfterGrayscaleText, after.AverageGrayscaleDeltaE);
+                SetDeltaEColor(AfterPrimaryText, after.AveragePrimaryDeltaE);
+
+                // The grade now reflects what the user actually sees: the corrected display.
+                SetGradeDisplay(after.GetGrade());
+                GradeScopeText.Text = "after correction";
+                StatusText.Text = $"Verified through the applied profile: average ΔE {after.AverageDeltaE:F2} " +
+                                  $"({results.Count(r => r.IsValid)} of {patches.Count} patches).";
+
+                CalibrationSounds.PlayCompletion();
+                Log.Info($"CalibrationReportWindow: Verify pass avg dE {after.AverageDeltaE:F2}, " +
+                         $"max {after.MaxDeltaE:F2}, gray {after.AverageGrayscaleDeltaE:F2}, primary {after.AveragePrimaryDeltaE:F2}.");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Verification failed:\n\n{ex.Message}",
+                    "Verify Calibration", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                try { await colorimeter.EndMeasurementSessionAsync(); } catch { }
+                patchWindow?.Close();
+                VerifyButton.Content = "Verify";
+                VerifyButton.IsEnabled = true;
+                ApplyButton.IsEnabled = true;
+                CloseButton.IsEnabled = true;
+            }
         }
     }
 }

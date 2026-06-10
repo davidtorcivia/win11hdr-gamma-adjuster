@@ -15,7 +15,9 @@ namespace HDRGammaController.Services
     /// </summary>
     public static class CalibrationCharts
     {
-        public sealed record Series(string Name, Color Color, IReadOnlyList<(double X, double Y)> Points, bool Dashed = false);
+        public sealed record Series(
+            string Name, Color Color, IReadOnlyList<(double X, double Y)> Points,
+            bool Dashed = false, bool Scatter = false);
 
         private static readonly Brush AxisBrush = new SolidColorBrush(Color.FromRgb(0x60, 0x60, 0x60));
         private static readonly Brush GridBrush = new SolidColorBrush(Color.FromRgb(0x2c, 0x2c, 0x2c));
@@ -53,6 +55,19 @@ namespace HDRGammaController.Services
             // Series
             foreach (var s in series)
             {
+                if (s.Scatter)
+                {
+                    var fill = new SolidColorBrush(s.Color);
+                    foreach (var (x, y) in s.Points)
+                    {
+                        var dot = new Ellipse { Width = 6, Height = 6, Fill = fill, Opacity = 0.9 };
+                        Canvas.SetLeft(dot, X(x) - 3);
+                        Canvas.SetTop(dot, Y(Math.Clamp(y, yMin, yMax)) - 3);
+                        canvas.Children.Add(dot);
+                    }
+                    continue;
+                }
+
                 var pl = new Polyline { Stroke = new SolidColorBrush(s.Color), StrokeThickness = 2, StrokeLineJoin = PenLineJoin.Round };
                 if (s.Dashed) pl.StrokeDashArray = new DoubleCollection { 4, 3 };
                 var pts = new PointCollection(s.Points.Count);
@@ -61,12 +76,23 @@ namespace HDRGammaController.Services
                 canvas.Children.Add(pl);
             }
 
-            // Legend (top-left inside plot)
+            // Legend (top-left inside plot; series with empty names — e.g. scatter overlays of
+            // an already-named line — are skipped)
             double ly = padT + 2;
             foreach (var s in series)
             {
-                canvas.Children.Add(new Rectangle { Width = 12, Height = 3, Fill = new SolidColorBrush(s.Color), });
-                Canvas.SetLeft(canvas.Children[^1], padL + 6); Canvas.SetTop(canvas.Children[^1], ly + 6);
+                if (string.IsNullOrEmpty(s.Name)) continue;
+                if (s.Scatter)
+                {
+                    var dot = new Ellipse { Width = 6, Height = 6, Fill = new SolidColorBrush(s.Color) };
+                    Canvas.SetLeft(dot, padL + 9); Canvas.SetTop(dot, ly + 4);
+                    canvas.Children.Add(dot);
+                }
+                else
+                {
+                    canvas.Children.Add(new Rectangle { Width = 12, Height = 3, Fill = new SolidColorBrush(s.Color), });
+                    Canvas.SetLeft(canvas.Children[^1], padL + 6); Canvas.SetTop(canvas.Children[^1], ly + 6);
+                }
                 canvas.Children.Add(Label(s.Name, padL + 22, ly, 120, TextAlignment.Left));
                 ly += 16;
             }
