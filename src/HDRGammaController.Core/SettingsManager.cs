@@ -62,6 +62,12 @@ namespace HDRGammaController.Core
         /// the calibration then faithfully reproduces.
         /// </summary>
         public string? MeterCorrectionPath { get; set; }
+
+        /// <summary>Last-used display type in calibration setup (DisplayType enum name).</summary>
+        public string? CalibDisplayType { get; set; }
+
+        /// <summary>Last-used "white point correction only" choice in calibration setup.</summary>
+        public bool? CalibWhitePointOnly { get; set; }
         
         public CalibrationSettings ToCalibrationSettings() => new CalibrationSettings
         {
@@ -338,8 +344,11 @@ namespace HDRGammaController.Core
             Save();
         }
 
-        /// <summary>Records (or clears) the meter spectral correction file for a monitor.</summary>
-        public void SetMeterCorrection(string monitorDevicePath, string? ccssPath)
+        /// <summary>
+        /// Records the calibration-setup choices for a monitor (meter correction file,
+        /// display type, white-point-only scope) so the next session opens pre-configured.
+        /// </summary>
+        public void SetCalibrationPrefs(string monitorDevicePath, string? ccssPath, string displayType, bool whitePointOnly)
         {
             if (string.IsNullOrEmpty(monitorDevicePath)) return;
             if (!_data.MonitorProfiles.TryGetValue(monitorDevicePath, out var profile))
@@ -348,6 +357,8 @@ namespace HDRGammaController.Core
                 _data.MonitorProfiles[monitorDevicePath] = profile;
             }
             profile.MeterCorrectionPath = ccssPath;
+            profile.CalibDisplayType = displayType;
+            profile.CalibWhitePointOnly = whitePointOnly;
             Save();
         }
 

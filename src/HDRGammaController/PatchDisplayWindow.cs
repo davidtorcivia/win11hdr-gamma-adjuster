@@ -33,14 +33,29 @@ namespace HDRGammaController
         private readonly TextBlock _patchInfo;
         private readonly TextBlock _phase;
 
+        /// <summary>Raised when the user presses Escape on the patch window (abort the sweep).</summary>
+        public event Action? AbortRequested;
+
         public PatchDisplayWindow(MonitorInfo monitor, double patchSize = 600, double offsetX = 0, double offsetY = 0)
         {
             WindowStyle = WindowStyle.None;
             ResizeMode = ResizeMode.NoResize;
             ShowInTaskbar = false;
-            ShowActivated = false;
+            // Activated on show so Escape lands here without an extra click.
+            ShowActivated = true;
             Topmost = true;
             Background = Surround;
+            Focusable = true;
+
+            PreviewKeyDown += (_, e) =>
+            {
+                if (e.Key == System.Windows.Input.Key.Escape)
+                {
+                    e.Handled = true;
+                    AbortRequested?.Invoke();
+                }
+            };
+            MouseDown += (_, _) => Focus();
 
             // Place via raw Win32 pixels once the HWND exists. Feeding the DXGI pixel rect
             // into WPF's DIP-based Left/Width on a hidden window gets reinterpreted against

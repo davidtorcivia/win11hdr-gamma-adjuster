@@ -55,6 +55,7 @@ namespace HDRGammaController
             _downloadButton.Click += (_, _) => DownloadSelected();
 
             var closeButton = MakeButton("Cancel");
+            closeButton.Background = new SolidColorBrush(Color.FromRgb(0x3d, 0x3d, 0x3d)); // secondary, not accent
             closeButton.Click += (_, _) => { DialogResult = false; Close(); };
 
             _list = new ListView

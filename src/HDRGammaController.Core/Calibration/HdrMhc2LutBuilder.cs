@@ -63,16 +63,15 @@ namespace HDRGammaController.Core.Calibration
 
             double blackNits = points[0].Nits;
             double peakNits = points[^1].Nits;
-            double pMeasuredMax = points[^1].P;
             if (peakNits <= blackNits * 1.5)
                 throw new InvalidOperationException(
-                    $"Measured HDR grayscale has almost no range ({blackNits:F2}–{peakNits:F2} nits) — readings look invalid.");
+                    $"Measured HDR grayscale has almost no range ({blackNits:F2}–{peakNits:F2} nits) - readings look invalid.");
 
             var lut = new double[LutSamples];
             // Correct fully only in the lower half of the measured range; fade to IDENTITY
             // between 50% and 80% of it. Two hard-won reasons (verified on the M27Q):
             //  1. The upper range sits inside the panel's HDR tone-mapping knee, where the
-            //     wire-axis model breaks down — "correcting" the knee overshoots and just
+            //     wire-axis model breaks down - "correcting" the knee overshoots and just
             //     dims highlights (verified white came in at 189 nits instead of ~220).
             //  2. The LUT is applied per channel AFTER the gamut matrix. Strong curvature
             //     near the top distorts the channel ratios of unequal drive values — which

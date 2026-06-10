@@ -93,8 +93,8 @@ namespace HDRGammaController.Core.Calibration
             if (maxDrive > 1.3) // keep in sync with the setup-time EDID filter
                 return new InstallResult(false, "",
                     $"The chosen target ('{target.Name}') needs primaries about {maxDrive:P0} of this " +
-                    "display's maximum — i.e. a wider gamut than the panel can physically produce, so the " +
-                    "correction would clip and cast color.\n\nCalibrate to a target the panel can reach — " +
+                    "display's maximum - i.e. a wider gamut than the panel can physically produce, so the " +
+                    "correction would clip and cast color.\n\nCalibrate to a target the panel can reach - " +
                     "for an SDR display that's usually \"sRGB (Gamma 2.2)\" or Rec.709. Re-run with that selected.");
 
             // White-point handling: the matrix is ABSOLUTE (maps content white to the target
@@ -244,7 +244,7 @@ namespace HDRGammaController.Core.Calibration
         }
 
         /// <summary>
-        /// Re-associates an already-installed profile after <see cref="Disable"/> — the
+        /// Re-associates an already-installed profile after <see cref="Disable"/> - the
         /// on/off half of A/B comparing a fresh calibration. Returns false if Windows
         /// refuses the association.
         /// </summary>

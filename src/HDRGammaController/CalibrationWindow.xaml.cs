@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Media;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -79,7 +78,6 @@ namespace HDRGammaController
         private readonly GammaMode _previousGammaMode;
         private readonly CalibrationSettings? _previousSettings;
         private bool _bypassApplied;
-        private bool _completedSuccessfully;
         private bool _measuredInHdr;
 
         private bool _isFullScreenMode = true;
@@ -1326,7 +1324,6 @@ namespace HDRGammaController
 
             if (success)
             {
-                _completedSuccessfully = true;
                 CompletionIcon.Text = "✓";
                 CompletionIcon.Foreground = FindResource("SuccessBrush") as SolidColorBrush;
                 CompletionTitle.Text = "Calibration Complete";
@@ -1564,3 +1561,4 @@ namespace HDRGammaController
 
     #endregion
 }
+

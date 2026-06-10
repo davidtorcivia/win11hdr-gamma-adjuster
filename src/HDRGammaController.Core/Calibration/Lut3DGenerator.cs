@@ -123,7 +123,7 @@ namespace HDRGammaController.Core.Calibration
             var valid = _measurements.Where(m => m.IsValid).ToList();
             if (valid.Count < 10)
                 throw new InvalidOperationException(
-                    $"Only {valid.Count} of {_measurements.Count} measurements were valid — " +
+                    $"Only {valid.Count} of {_measurements.Count} measurements were valid - " +
                     "too few to calibrate. The colorimeter may have lost contact with the screen.");
 
             double peak = valid.Max(m => m.Xyz.Y);
@@ -134,7 +134,7 @@ namespace HDRGammaController.Core.Calibration
             if (peak < 1.0)
                 throw new InvalidOperationException(
                     $"All measurements were near-black (peak {peak:F3} cd/m²). The colorimeter " +
-                    "isn't reading the screen — check that the sensor is flush against the patch " +
+                    "isn't reading the screen - check that the sensor is flush against the patch " +
                     "and that no other program is holding the device.");
 
             // White must be meaningfully brighter than black, or there's no tone curve to
@@ -144,12 +144,12 @@ namespace HDRGammaController.Core.Calibration
             if (white != null && black != null && white.Xyz.Y <= black.Xyz.Y * 1.5)
                 throw new InvalidOperationException(
                     $"White ({white.Xyz.Y:F2} cd/m²) was not meaningfully brighter than black " +
-                    $"({black.Xyz.Y:F2} cd/m²). Measurements look invalid — the probe may not " +
+                    $"({black.Xyz.Y:F2} cd/m²). Measurements look invalid - the probe may not " +
                     "have been reading the displayed patches.");
 
             if (peak <= floor * 1.5)
                 throw new InvalidOperationException(
-                    "The measured grayscale shows almost no luminance range — the probe likely " +
+                    "The measured grayscale shows almost no luminance range - the probe likely " +
                     "returned the same reading for every patch. Re-seat the colorimeter and retry.");
         }
 

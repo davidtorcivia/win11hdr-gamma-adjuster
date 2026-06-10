@@ -341,7 +341,7 @@ namespace HDRGammaController.Core.Calibration
                 // so the UI's existing driver-install offer flow still fires.
                 if (UsbDriverHelper.IsDriverError(ex.Message))
                     throw new UsbDriverException(
-                        "Colorimeter communication failed — the ArgyllCMS USB driver may be missing or another application holds the device.\n" + ex.Message, ex);
+                        "Colorimeter communication failed - the ArgyllCMS USB driver may be missing or another application holds the device.\n" + ex.Message, ex);
                 throw;
             }
         }
@@ -384,7 +384,7 @@ namespace HDRGammaController.Core.Calibration
             // Transient path: callers who skip the Begin/End lifecycle (e.g. ad-hoc one-off
             // measurements from tooling) still get correct behavior, just with the extra
             // cost of spotread startup/shutdown per call.
-            Log($"No active session — opening transient one (HDR={hdrMode})");
+            Log($"No active session - opening transient one (HDR={hdrMode})");
             int instrumentIndex = _connectedColorimeter?.InstrumentIndex ?? 1;
             SpotreadSession transient;
             try

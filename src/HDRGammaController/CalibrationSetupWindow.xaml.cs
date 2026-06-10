@@ -168,13 +168,36 @@ namespace HDRGammaController
             SelectCorrectionPath(dialog.FileName, addIfMissing: true);
         }
 
+        /// <summary>
+        /// Restores the monitor's last calibration-setup choices: meter correction file,
+        /// display type, and white-point-only scope. Users shouldn't have to re-pick OLED
+        /// and the CCSS for the same panel every session.
+        /// </summary>
         private void LoadCorrectionForSelectedMonitor()
         {
             var monitor = (MonitorComboBox.SelectedItem as MonitorComboItem)?.Monitor;
-            var saved = monitor != null && _settingsManager != null
-                ? _settingsManager.GetMonitorProfile(monitor.MonitorDevicePath)?.MeterCorrectionPath
+            var prefs = monitor != null && _settingsManager != null
+                ? _settingsManager.GetMonitorProfile(monitor.MonitorDevicePath)
                 : null;
-            SelectCorrectionPath(saved, addIfMissing: !string.IsNullOrEmpty(saved));
+
+            SelectCorrectionPath(prefs?.MeterCorrectionPath, addIfMissing: !string.IsNullOrEmpty(prefs?.MeterCorrectionPath));
+
+            if (Enum.TryParse(prefs?.CalibDisplayType, out DisplayType savedType))
+            {
+                var radio = savedType switch
+                {
+                    DisplayType.Oled => DisplayTypeOled,
+                    DisplayType.LcdWideGamut => DisplayTypeWideGamut,
+                    DisplayType.LcdCcfl => DisplayTypeCcfl,
+                    _ => DisplayTypeLcdLed,
+                };
+                radio.IsChecked = true;
+            }
+
+            // After the radio: selecting OLED auto-suggests white-point-only, but a saved
+            // explicit choice wins.
+            if (prefs?.CalibWhitePointOnly is bool savedWpOnly)
+                WhitePointOnlyCheck.IsChecked = savedWpOnly;
         }
 
         private void SelectCorrectionPath(string? path, bool addIfMissing)
@@ -255,7 +278,7 @@ namespace HDRGammaController
             else if (!requiresHdr && displayIsHdr)
                 reason = "This is an SDR target; switch the display to SDR to use it.";
             else if (gamut != null && !TargetFitsGamut(target, gamut))
-                reason = "Exceeds this display's gamut — it can't reproduce these primaries.";
+                reason = "Exceeds this display's gamut - it can't reproduce these primaries.";
 
             rb.IsEnabled = reason == null;
             rb.ToolTip = reason;
@@ -539,11 +562,14 @@ namespace HDRGammaController
             SelectedDisplayType = GetSelectedDisplayType();
             _colorimeterService?.SetDisplayType(SelectedDisplayType);
 
-            // Meter spectral correction: applied to this session and remembered per monitor.
+            // Meter spectral correction: applied to this session; all setup choices are
+            // remembered per monitor for the next session.
             string? correction = SelectedCorrectionPath;
             _colorimeterService?.SetCorrectionFile(correction);
             if (SelectedMonitor != null)
-                _settingsManager?.SetMeterCorrection(SelectedMonitor.MonitorDevicePath, correction);
+                _settingsManager?.SetCalibrationPrefs(
+                    SelectedMonitor.MonitorDevicePath, correction,
+                    SelectedDisplayType.ToString(), WhitePointOnlyCheck.IsChecked == true);
 
             Log.Info($"Start_Click: Monitor={SelectedMonitor?.FriendlyName ?? "null"}, Target={SelectedTarget?.Name ?? "null"}, DisplayType={SelectedDisplayType}, " +
                      $"Correction={(correction != null ? System.IO.Path.GetFileName(correction) : "built-in")}, Colorimeter={(_colorimeterService != null ? "present" : "null")}");

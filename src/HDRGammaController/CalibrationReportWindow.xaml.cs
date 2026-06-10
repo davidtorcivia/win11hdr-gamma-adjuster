@@ -23,6 +23,7 @@ namespace HDRGammaController
         private readonly Lut3D? _correctionLut;
         private readonly IReadOnlyList<MeasurementResult>? _measurements;
         private IReadOnlyList<MeasurementResult>? _verifyMeasurements;
+        private System.Threading.CancellationTokenSource? _verifyCts;
 
         // Everything needed to install the calibration as a native Windows MHC2 profile and
         // to verify it afterwards. Set by the calibration window; when present, "Apply
@@ -100,6 +101,18 @@ namespace HDRGammaController
                 await Task.Delay(600);
                 await ApplyAndVerifyAsync();
             };
+
+            // Escape aborts a running verification from this window too, and closing the
+            // window mid-sweep cancels it instead of leaving the sweep running headless.
+            PreviewKeyDown += (_, e) =>
+            {
+                if (e.Key == System.Windows.Input.Key.Escape && _verifyCts is { IsCancellationRequested: false })
+                {
+                    e.Handled = true;
+                    _verifyCts.Cancel();
+                }
+            };
+            Closing += (_, _) => _verifyCts?.Cancel();
         }
 
         private void PopulateReport()
@@ -349,7 +362,10 @@ namespace HDRGammaController
                 double cct = ColorMath.ChromaticityToCct(_characterization.WhitePoint);
                 if (cct < 6000 || cct > 7000)
                 {
-                    recommendations.Add($"White point ({cct:F0}K) differs from D65 (6500K). Adjust OSD color temperature if targeting D65.");
+                    recommendations.Add(
+                        $"Native white point ({cct:F0}K) sits well off D65. The installed profile corrects this " +
+                        "digitally; setting the monitor's OSD color temperature closer to 6500K instead preserves " +
+                        "more brightness and bit depth.");
                 }
 
                 double duv = ColorMath.CalculateDuv(_characterization.WhitePoint);
@@ -739,6 +755,8 @@ namespace HDRGammaController
             ApplyButton.IsEnabled = false;
             CloseButton.IsEnabled = false;
             PatchDisplayWindow? patchWindow = null;
+            using var verifyCts = new System.Threading.CancellationTokenSource();
+            _verifyCts = verifyCts;
 
             // RAMP QUIESCENCE: verification grades the CALIBRATION, so the user's gamma
             // preference and night mode must not ride on the GPU ramp during the sweep.
@@ -763,19 +781,20 @@ namespace HDRGammaController
             try
             {
                 patchWindow = new PatchDisplayWindow(ctx.Monitor, ctx.PatchSize, ctx.PatchOffsetX, ctx.PatchOffsetY);
+                patchWindow.AbortRequested += () => verifyCts.Cancel(); // Escape aborts the sweep
                 patchWindow.Show();
 
                 var patches = CalibrationVerifier.BuildVerificationPatches();
                 var results = new List<MeasurementResult>();
-                await colorimeter.BeginMeasurementSessionAsync(hdrMode: ctx.HdrMode);
+                await colorimeter.BeginMeasurementSessionAsync(hdrMode: ctx.HdrMode, verifyCts.Token);
                 for (int i = 0; i < patches.Count; i++)
                 {
                     var p = patches[i];
                     VerifyButton.Content = $"Verifying {i + 1}/{patches.Count}…";
                     patchWindow.SetProgress(i + 1, patches.Count, p.Name);
                     patchWindow.SetColor(p.DisplayRgb.R, p.DisplayRgb.G, p.DisplayRgb.B);
-                    await Task.Delay(i == 0 ? 1200 : 500); // settle (longer for the first patch)
-                    results.Add(await colorimeter.MeasureAsync(p, ctx.HdrMode));
+                    await Task.Delay(i == 0 ? 1200 : 500, verifyCts.Token); // settle (longer for the first patch)
+                    results.Add(await colorimeter.MeasureAsync(p, ctx.HdrMode, verifyCts.Token));
                     if (ctx.CaptureSounds)
                         CalibrationSounds.PlayCapture();
                 }
@@ -809,6 +828,10 @@ namespace HDRGammaController
                 Log.Info($"CalibrationReportWindow: Verify pass avg dE {after.AverageDeltaE:F2}, " +
                          $"max {after.MaxDeltaE:F2}, gray {after.AverageGrayscaleDeltaE:F2}, primary {after.AveragePrimaryDeltaE:F2}.");
             }
+            catch (OperationCanceledException)
+            {
+                StatusText.Text = "Verification cancelled. Use Re-verify to run it again.";
+            }
             catch (Exception ex)
             {
                 MessageBox.Show($"Verification failed:\n\n{ex.Message}",
@@ -816,6 +839,7 @@ namespace HDRGammaController
             }
             finally
             {
+                _verifyCts = null;
                 try { await colorimeter.EndMeasurementSessionAsync(); } catch { }
                 patchWindow?.Close();
                 if (bypassed)
