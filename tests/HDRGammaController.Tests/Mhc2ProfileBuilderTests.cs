@@ -98,6 +98,50 @@ namespace HDRGammaController.Tests
         }
 
         [Fact]
+        public void Build_PatchesProfileDescription_AsMlucEnUs()
+        {
+            string? template = FindTemplate();
+            if (template == null) return; // template not present in this checkout; skip silently
+
+            // Longer than the template's 42-char allocation, to exercise the append path.
+            const string name = "M27Q P - Display P3 G2.2 - 2026-06-10 1142 (test)";
+            var identity = new double[,] { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
+            var lut = new double[1024];
+            for (int i = 0; i < 1024; i++) lut[i] = i / 1023.0;
+
+            string outPath = Path.Combine(Path.GetTempPath(), $"mhc2_desc_{Guid.NewGuid():N}.icm");
+            try
+            {
+                Mhc2ProfileBuilder.Build(template, outPath, identity, lut, lut, lut, name);
+                var b = File.ReadAllBytes(outPath);
+
+                // Header profile-size field must match the (grown) file.
+                Assert.Equal(b.Length, ReadU32(b, 0));
+
+                // Find the desc tag and parse it as mluc/enUS.
+                int tagCount = ReadU32(b, 128);
+                int off = -1, size = 0;
+                for (int i = 0; i < tagCount; i++)
+                {
+                    int e = 132 + i * 12;
+                    if (ReadU32(b, e) == 0x64657363) { off = ReadU32(b, e + 4); size = ReadU32(b, e + 8); break; }
+                }
+                Assert.True(off > 0, "no desc tag");
+                Assert.Equal(0x6D6C7563, ReadU32(b, off));         // 'mluc'
+                Assert.Equal(1, ReadU32(b, off + 8));              // one record
+                int strLen = ReadU32(b, off + 20);
+                int strOff = ReadU32(b, off + 24);
+                Assert.Equal(28 + strLen, size);
+                string text = System.Text.Encoding.BigEndianUnicode.GetString(b, off + strOff, strLen);
+                Assert.Equal(name, text);
+            }
+            finally
+            {
+                try { File.Delete(outPath); } catch { }
+            }
+        }
+
+        [Fact]
         public void BuildGamutMatrix_IdentityWhenDisplayMatchesTarget()
         {
             // If the display's measured matrix equals the target's, the gamut correction is identity.

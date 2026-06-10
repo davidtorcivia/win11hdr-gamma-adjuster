@@ -33,15 +33,22 @@ namespace HDRGammaController.Core.Calibration
         private const int Sf32Signature = 0x73663332; // 'sf32'
         private const int LutSamples = 1024;
 
+        private const int DescSignature = 0x64657363; // 'desc'
+        private const int MlucSignature = 0x6D6C7563; // 'mluc'
+
         /// <summary>
         /// Reads <paramref name="templatePath"/>, patches its MHC2 tag with the given matrix
         /// and per-channel LUTs, and writes <paramref name="outputPath"/>.
         /// </summary>
         /// <param name="matrix3x3">Gamut correction matrix (content-linear-RGB → display-linear-RGB). The 4th column (offset) is written as 0.</param>
         /// <param name="lutR">Red tone LUT, 1024 entries in [0,1].</param>
+        /// <param name="description">Profile description shown by Windows Color Management
+        /// (replaces the template's leftover "SDR ACM: srgb_d50 [...]" text). Null keeps the
+        /// template's description.</param>
         public static void Build(
             string templatePath, string outputPath,
-            double[,] matrix3x3, double[] lutR, double[] lutG, double[] lutB)
+            double[,] matrix3x3, double[] lutR, double[] lutG, double[] lutB,
+            string? description = null)
         {
             if (matrix3x3.GetLength(0) != 3 || matrix3x3.GetLength(1) != 3)
                 throw new ArgumentException("matrix must be 3x3", nameof(matrix3x3));
@@ -72,10 +79,63 @@ namespace HDRGammaController.Core.Calibration
             WriteLut(data, lut1Off, lutG);
             WriteLut(data, lut2Off, lutB);
 
+            if (!string.IsNullOrWhiteSpace(description))
+                data = PatchDescription(data, description);
+
             // Zero the profile ID (bytes 84–99): we changed the body, so the stored MD5 is stale.
             for (int z = 84; z < 100; z++) data[z] = 0;
 
             File.WriteAllBytes(outputPath, data);
+        }
+
+        /// <summary>
+        /// Replaces the profile's 'desc' tag (what Windows Color Management displays) with
+        /// <paramref name="description"/>. The new text rarely fits the template's allocation,
+        /// so a fresh 'mluc' (en-US) block is appended at the end of the file and the tag
+        /// table entry is repointed — tag data may live anywhere, readers follow the table.
+        /// The template's old desc bytes become unused slack.
+        /// </summary>
+        private static byte[] PatchDescription(byte[] data, string description)
+        {
+            int tagCount = ReadU32(data, IccHeaderSize);
+            int descEntry = -1;
+            for (int i = 0; i < tagCount; i++)
+            {
+                int e = IccHeaderSize + 4 + i * IccTagEntrySize;
+                if (e + 12 <= data.Length && ReadU32(data, e) == DescSignature) { descEntry = e; break; }
+            }
+            if (descEntry < 0) return data; // template has no desc tag; nothing to clean up
+
+            // mluc: sig(4) reserved(4) recordCount=1(4) recordSize=12(4)
+            //       lang 'enUS'(4) stringLength(4) stringOffset=28(4) + UTF-16BE text
+            byte[] text = System.Text.Encoding.BigEndianUnicode.GetBytes(description);
+            byte[] mluc = new byte[28 + text.Length];
+            WriteU32(mluc, 0, MlucSignature);
+            WriteU32(mluc, 8, 1);
+            WriteU32(mluc, 12, 12);
+            mluc[16] = (byte)'e'; mluc[17] = (byte)'n'; mluc[18] = (byte)'U'; mluc[19] = (byte)'S';
+            WriteU32(mluc, 20, text.Length);
+            WriteU32(mluc, 24, 28);
+            Array.Copy(text, 0, mluc, 28, text.Length);
+
+            int newOffset = (data.Length + 3) & ~3; // 4-byte aligned tag start
+            int padded = (mluc.Length + 3) & ~3;
+            byte[] result = new byte[newOffset + padded];
+            Array.Copy(data, result, data.Length);
+            Array.Copy(mluc, 0, result, newOffset, mluc.Length);
+
+            WriteU32(result, descEntry + 4, newOffset);
+            WriteU32(result, descEntry + 8, mluc.Length);
+            WriteU32(result, 0, result.Length); // header profile-size field
+            return result;
+        }
+
+        private static void WriteU32(byte[] b, int o, int v)
+        {
+            b[o] = (byte)((v >> 24) & 0xFF);
+            b[o + 1] = (byte)((v >> 16) & 0xFF);
+            b[o + 2] = (byte)((v >> 8) & 0xFF);
+            b[o + 3] = (byte)(v & 0xFF);
         }
 
         /// <summary>

@@ -597,12 +597,14 @@ namespace HDRGammaController
         {
             // If THIS app already installed a calibration profile on the target monitor, Windows
             // is applying it at the compositor and we'd be measuring the display THROUGH our own
-            // correction — a useless reading. Remove it first so we characterize the native panel.
+            // correction — a useless reading. DISABLE it (disassociate only) so we characterize
+            // the native panel; the .icm stays in the color store so the previous calibration
+            // can be restored from Color Management if this run is abandoned.
             if (_settingsManager != null && _targetMonitor != null &&
                 _settingsManager.GetMonitorProfile(_targetMonitor.MonitorDevicePath)?.Mhc2ProfileName is { } activeProfile)
             {
-                Log.Info($"CalibrationWindow: Removing our active calibration profile '{activeProfile}' before measuring native.");
-                CalibrationProfileInstaller.Uninstall(_targetMonitor, activeProfile);
+                Log.Info($"CalibrationWindow: Disabling active calibration profile '{activeProfile}' before measuring native (kept in color store).");
+                CalibrationProfileInstaller.Disable(_targetMonitor, activeProfile);
                 _settingsManager.SetMhc2Calibration(_targetMonitor.MonitorDevicePath, null);
                 NativeGammaRamp.TryClear(_targetMonitor.DeviceName);
                 await Task.Delay(300); // let the compositor drop the profile

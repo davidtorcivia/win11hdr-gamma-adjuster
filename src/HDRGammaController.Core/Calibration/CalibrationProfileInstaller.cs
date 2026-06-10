@@ -105,7 +105,10 @@ namespace HDRGammaController.Core.Calibration
 
             try
             {
-                Mhc2ProfileBuilder.Build(template, srcPath, mhc2Matrix, gainedR, gainedG, gainedB);
+                // The internal description is what Windows Color Management displays — without
+                // it the profile shows the template's leftover "SDR ACM: srgb_d50 [...]" text.
+                Mhc2ProfileBuilder.Build(template, srcPath, mhc2Matrix, gainedR, gainedG, gainedB,
+                    description: Path.GetFileNameWithoutExtension(profileName));
 
                 // Copy into the system color store. Returns false if an identical name already
                 // exists — harmless, we re-associate below regardless.
@@ -135,7 +138,28 @@ namespace HDRGammaController.Core.Calibration
             }
         }
 
-        /// <summary>Removes a previously-installed calibration profile from a monitor.</summary>
+        /// <summary>
+        /// Disables a calibration profile on a monitor WITHOUT deleting it: removes the
+        /// device association so Windows stops applying it, but the .icm stays in the system
+        /// color store and can be re-associated from Color Management at any time. This is
+        /// what pre-measurement bypass should use — measuring native must not destroy the
+        /// user's previous calibration.
+        /// </summary>
+        public static void Disable(MonitorInfo monitor, string profileName)
+        {
+            if (string.IsNullOrEmpty(monitor.MonitorDevicePath) || string.IsNullOrEmpty(profileName)) return;
+            try
+            {
+                Wcs.DisassociateColorProfileFromDevice(null, profileName, monitor.MonitorDevicePath);
+                Log.Info($"CalibrationProfileInstaller: Disabled '{profileName}' on {monitor.FriendlyName} (file kept in color store).");
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"CalibrationProfileInstaller: Disable failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>Fully removes a previously-installed calibration profile from a monitor.</summary>
         public static void Uninstall(MonitorInfo monitor, string profileName)
         {
             if (string.IsNullOrEmpty(monitor.MonitorDevicePath) || string.IsNullOrEmpty(profileName)) return;
