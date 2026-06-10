@@ -410,11 +410,23 @@ namespace HDRGammaController.Core.Calibration
             var metrics = new CalibrationMetrics();
             var deltaEs = new List<double>();
 
-            foreach (var measurement in _measurements.Where(m => m.IsValid))
+            var valid = _measurements.Where(m => m.IsValid).ToList();
+
+            // The colorimeter returns ABSOLUTE luminance (white Y ≈ 100–120 cd/m²), but the
+            // patch targets are normalized to white Y = 1. Taking Lab on raw absolute XYZ pushes
+            // L* into the hundreds (white → L* ≈ 559) and makes ΔE meaningless — that is the
+            // "ΔE 90+" artifact. Normalize measured XYZ so the brightest patch (white) maps to
+            // Y = 1, matching the target scale, exactly as CalibrationReport.CalculateDeltaEStats
+            // does. The white-point error then shows up correctly as an a*/b* deviation.
+            double peakY = valid.Count > 0 ? valid.Max(m => m.Xyz.Y) : 1.0;
+            if (peakY <= 0) peakY = 1.0;
+
+            foreach (var measurement in valid)
             {
                 var targetXyz = CalculateTargetXyz(measurement.Patch.DisplayRgb);
                 var targetLab = ColorMath.XyzToLab(targetXyz);
-                var measuredLab = measurement.Lab;
+                var normalized = new CieXyz(measurement.Xyz.X / peakY, measurement.Xyz.Y / peakY, measurement.Xyz.Z / peakY);
+                var measuredLab = ColorMath.XyzToLab(normalized);
 
                 double deltaE = measuredLab.DeltaE2000(targetLab);
                 deltaEs.Add(deltaE);

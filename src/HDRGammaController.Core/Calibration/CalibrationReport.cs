@@ -442,12 +442,20 @@ namespace HDRGammaController.Core.Calibration
         {
             var issues = new List<CalibrationIssue>();
 
+            // Normalize measured XYZ to white Y = 1 before Lab/ΔE (targets are normalized);
+            // comparing absolute measured Lab (white L* ≈ 559) to normalized targets otherwise
+            // flags every critical patch as a huge false-positive ΔE. Mirrors CalculateDeltaEStats.
+            double peakY = Measurements.Count > 0 ? Measurements.Max(m => m.Xyz.Y) : 1.0;
+            if (peakY <= 0) peakY = 1.0;
+
             // Check for high Delta E in critical patches
             foreach (var m in Measurements.Where(m => m.Patch.IsCritical))
             {
                 if (m.Patch.TargetXyz != null)
                 {
-                    double deltaE = m.DeltaE2000To(m.Patch.TargetXyz.Value);
+                    var normalized = new CieXyz(m.Xyz.X / peakY, m.Xyz.Y / peakY, m.Xyz.Z / peakY);
+                    var measuredLab = ColorMath.XyzToLab(normalized);
+                    double deltaE = measuredLab.DeltaE2000(ColorMath.XyzToLab(m.Patch.TargetXyz.Value));
                     if (deltaE > 3.0)
                     {
                         issues.Add(new CalibrationIssue
@@ -455,7 +463,7 @@ namespace HDRGammaController.Core.Calibration
                             Severity = deltaE > 5.0 ? IssueSeverity.Error : IssueSeverity.Warning,
                             Category = IssueCategory.ColorAccuracy,
                             Message = $"High Delta E ({deltaE:F1}) on critical patch: {m.Patch.Name}",
-                            Details = $"Measured: {m.Lab}, Target: {ColorMath.XyzToLab(m.Patch.TargetXyz.Value)}"
+                            Details = $"Measured: {measuredLab}, Target: {ColorMath.XyzToLab(m.Patch.TargetXyz.Value)}"
                         });
                     }
                 }
