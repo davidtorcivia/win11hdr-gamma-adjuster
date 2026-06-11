@@ -136,13 +136,14 @@ namespace HDRGammaController
                 // POSITIONING PHASE: same drag interaction as the calibration window — the
                 // user puts the square under the probe, then presses Continue here.
                 surround = new PatchDisplayWindow(_monitor);
+                surround.ContinueRequested += () => _positionDone?.TrySetResult(true);
                 surround.Show();
                 surround.SetColor(0.5, 0.5, 0.5);
-                surround.SetProgress(0, 5, "Drag the square under the probe, then press Continue");
+                surround.SetProgress(0, 5, "Drag the square under the probe - then DOUBLE-CLICK or press ENTER to continue");
                 surround.EnableDrag();
                 _positionDone = new TaskCompletionSource<bool>();
                 _runButton.Content = "Continue (square is under the probe)";
-                Say("Position the gray square under the probe (drag it on the display), then press Continue…");
+                Say("Position the gray square under the probe, then double-click it (or press Enter) to continue…");
                 await _positionDone.Task;
                 _positionDone = null;
                 _runButton.Content = "Run Sanity Check";

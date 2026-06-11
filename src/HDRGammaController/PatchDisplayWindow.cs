@@ -36,6 +36,12 @@ namespace HDRGammaController
         /// <summary>Raised when the user presses Escape on the patch window (abort the sweep).</summary>
         public event Action? AbortRequested;
 
+        /// <summary>
+        /// Raised on Enter/Space or double-click — "I'm done positioning, continue." The
+        /// patch window covers the whole monitor, so the confirmation has to live ON it.
+        /// </summary>
+        public event Action? ContinueRequested;
+
         /// <summary>Current patch placement offset from center, in pixels.</summary>
         public double OffsetX { get; private set; }
         public double OffsetY { get; private set; }
@@ -104,8 +110,14 @@ namespace HDRGammaController
                     e.Handled = true;
                     AbortRequested?.Invoke();
                 }
+                else if (e.Key is System.Windows.Input.Key.Enter or System.Windows.Input.Key.Space)
+                {
+                    e.Handled = true;
+                    ContinueRequested?.Invoke();
+                }
             };
             MouseDown += (_, _) => Focus();
+            MouseDoubleClick += (_, _) => ContinueRequested?.Invoke();
 
             // Place via raw Win32 pixels once the HWND exists. Feeding the DXGI pixel rect
             // into WPF's DIP-based Left/Width on a hidden window gets reinterpreted against
