@@ -24,7 +24,7 @@
 
   <main>
 
-    <section>
+    <section class="page-head">
       <div class="wrap-narrow">
         <h1>Guides</h1>
         <p class="section-lede">
@@ -37,7 +37,8 @@
     <!-- ============ Quick start ============ -->
     <section id="quick-start">
       <div class="wrap-narrow">
-        <h2>Quick start</h2>
+        <span class="kicker">First hour</span>
+        <h2 style="margin-top: 0;">Quick start</h2>
 
         <ol class="steps">
 
@@ -112,7 +113,8 @@
     <!-- ============ Best practices ============ -->
     <section id="best-practices">
       <div class="wrap-narrow">
-        <h2>Calibration best practices</h2>
+        <span class="kicker">Measure well</span>
+        <h2 style="margin-top: 0;">Calibration best practices</h2>
         <p class="section-lede">
           A colorimeter reports what it sees. These habits make sure what it sees is your display's
           steady-state behavior and not a transient, a reflection, or a meter artifact.
@@ -165,11 +167,12 @@
         Tint or Temperature trim against a reference display is normal, rides on top of the
         profile, and never affects the measurements.</p>
 
-        <div class="tip">
-          <strong>!</strong> If something ever looks wrong, <kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>F4</kbd>
+        <aside class="note">
+          <span class="note-label">Escape hatch</span>
+          <p>If something ever looks wrong, <kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>F4</kbd>
           (panic mode) clears all gamma tables immediately, and the calibration report's toggle
-          button disables the installed profile for an instant A/B.
-        </div>
+          button disables the installed profile for an instant A/B.</p>
+        </aside>
 
       </div>
     </section>

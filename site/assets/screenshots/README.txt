@@ -1,10 +1,12 @@
 Screenshots to capture for the Gloam site
 =========================================
 
-All placeholders live in index.html (section id="screenshots"). Each figure has
-a TODO comment naming the file expected here. Capture at 16:10 or similar wide
-aspect, PNG, ideally 1600px+ wide (they are displayed at ~450px in a grid, so
-2x for high-DPI). Dark theme, HDR monitor names visible where possible.
+Placeholders live in index.html. Four are in the section id="screenshots"
+grid (dashboard.png is the full-width lead shot); night-mode-schedule.png
+sits in the night mode feature section (id="night-mode"). Each figure has a
+TODO comment naming the file expected here. Capture at 16:10 or similar wide
+aspect, PNG, ideally 1600px+ wide (2x for high-DPI). Dark theme, HDR monitor
+names visible where possible.
 
 1. dashboard.png
    The multi-monitor dashboard ("Expert Dashboard"). Show at least two
@@ -33,4 +35,6 @@ index.html with:
 
   <img src="assets/screenshots/<name>.png" alt="(keep the existing aria-label text as alt)" loading="lazy">
 
-and delete the placeholder div and TODO comment.
+Keep the surrounding <div class="frame"> wrapper (it draws the gradient
+hairline border around the image), delete only the placeholder div and the
+TODO comment.

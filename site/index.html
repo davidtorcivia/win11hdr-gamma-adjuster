@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Gloam - HDR-native display calibration for Windows</title>
-  <meta name="description" content="Gloam is a colorimeter-driven display calibration tool for Windows 11. HDR-native MHC2/PQ pipeline, per-monitor gamma control, night mode scheduling, and verified results.">
+  <title>Gloam - Fix Windows 11 HDR gamma, and a night mode done right</title>
+  <meta name="description" content="Gloam fixes Windows 11's washed-out SDR-in-HDR gamma and replaces Night Light with a perceptually correct, sun-scheduled night mode. Native pipeline, no dependencies, with optional colorimeter calibration on top.">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -28,93 +28,176 @@
     <div class="hero">
       <div class="wrap">
         <h1>Gloam</h1>
-        <p class="tagline">HDR-native display calibration for Windows, from the black floor to peak white.</p>
+        <p class="tagline">Fix the gray that Windows HDR casts over everything. Then let your screen follow the sun down.</p>
         <p class="sub">
-          Gloam measures your display with a colorimeter and installs the correction where Windows
-          actually applies color: the HDR compositor itself, as a native MHC2 profile. No assumptions
-          about how Windows maps SDR content, no profile that quietly stops working when HDR turns on.
-          Measured, applied, and verified, with a scored report at the end.
+          Gloam repairs Windows 11's broken SDR-in-HDR gamma, per monitor, in pure math, with
+          nothing to install. And it replaces Night Light with a night mode that gets the color
+          science right: blended in linear light, scheduled by the real sun, composed cleanly
+          with your calibration. When you want proof, a colorimeter takes the same pipeline to a
+          measured, verified, HDR-native calibration.
         </p>
         <div class="hero-actions">
           <a class="btn btn-primary" href="https://github.com/davidtorcivia/gloam/releases/latest">Download for Windows</a>
           <a class="btn btn-secondary" href="guides.html">Quick-start guide</a>
         </div>
-        <p class="hero-meta">Free and open source (MIT). Windows 10/11, HDR and SDR displays. Colorimeter optional for gamma correction, required for full calibration.</p>
+        <p class="hero-meta">Free and open source (MIT). Windows 10/11, HDR and SDR displays. No colorimeter needed for the gamma fix or night mode.</p>
       </div>
     </div>
 
-    <!-- ============ Features ============ -->
-    <section id="features">
+    <div class="horizon" aria-hidden="true"></div>
+
+    <!-- ============ Hero feature 1: the HDR gamma fix ============ -->
+    <section class="feature" id="hdr-fix">
       <div class="wrap">
-        <h2>What it does</h2>
+        <div class="feature-copy">
+          <span class="kicker">The reason Gloam exists</span>
+          <h2>Windows lifts your HDR shadows. Gloam puts them back.</h2>
+          <p>
+            With HDR enabled, Windows 11 decodes every SDR window using the piecewise sRGB curve.
+            Almost nothing you look at was mastered for that curve: three decades of games, film,
+            and the desktop itself were tuned on gamma 2.2 displays. The mismatch lands exactly
+            where your eyes are most sensitive, pouring extra light into the shadows and turning
+            blacks into a flat gray haze.
+          </p>
+          <p>
+            Gloam rebuilds the tone curve inside the HDR signal path itself: it undoes the sRGB
+            assumption and redoes the decode as gamma 2.2 or BT.1886 gamma 2.4, independently per
+            monitor. Pure math. No colorimeter, no profiles to manage, no dependencies.
+          </p>
+          <ul class="fact-list">
+            <li><strong>Per monitor, on a hotkey.</strong> Gamma 2.2, 2.4, or Windows default, switchable globally without opening a menu.</li>
+            <li><strong>Self-healing.</strong> A ramp guard notices when a game or driver resets the correction and silently restores it within seconds.</li>
+            <li><strong>Native apply.</strong> Sub-millisecond writes straight to the GPU gamma ramp, no helper process.</li>
+            <li><strong>HDR headroom respected.</strong> Highlights above SDR white blend smoothly to passthrough, so specular peaks stay bright.</li>
+          </ul>
+        </div>
+        <div class="feature-visual">
+          <figure class="curve-stats">
+            <dl>
+              <div class="stat-row">
+                <dt>10% signal</dt>
+                <span class="bar" style="--w: 100%" aria-hidden="true"></span>
+                <dd>+58.7%</dd>
+              </div>
+              <div class="stat-row">
+                <dt>20% signal</dt>
+                <span class="bar" style="--w: 89%" aria-hidden="true"></span>
+                <dd>+52.5%</dd>
+              </div>
+              <div class="stat-row">
+                <dt>30% signal</dt>
+                <span class="bar" style="--w: 58%" aria-hidden="true"></span>
+                <dd>+34.3%</dd>
+              </div>
+              <div class="stat-row">
+                <dt>50% signal</dt>
+                <span class="bar" style="--w: 14%" aria-hidden="true"></span>
+                <dd>+8.5%</dd>
+              </div>
+            </dl>
+            <figcaption>
+              How much extra light Windows' sRGB decode produces versus the gamma 2.2 the content
+              was mastered for. The error is concentrated in the shadows, where it reads as a gray
+              wash. Full derivation in the <a href="whitepaper.html#s2-4">whitepaper</a>.
+            </figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Hero feature 2: night mode ============ -->
+    <section class="feature flip" id="night-mode">
+      <div class="wrap">
+        <div class="feature-copy">
+          <span class="kicker">After sundown</span>
+          <h2>A night mode with the math done right.</h2>
+          <p>
+            Warming a screen is a color transform, and most tools get the color wrong. Windows
+            Night Light applies its filter at the compositor, where it stacks unpredictably with
+            anything else touching the display pipeline. Gloam computes the warm shift in linear
+            light, where light physically mixes, and bakes it into the same high-precision
+            pipeline as your gamma and calibration before anything is quantized.
+          </p>
+          <p>
+            It follows the real sun, too: sunset and sunrise are computed for your location, with
+            smooth fades, per-app exclusions, and per-monitor temperature offsets so a warm
+            evening still looks matched across displays. It works on SDR monitors as well as HDR.
+          </p>
+          <ul class="fact-list">
+            <li><strong>Linear-light blending.</strong> Temperature shifts are applied where light actually adds, not in gamma-encoded space.</li>
+            <li><strong>Planckian-locus accuracy.</strong> A CIE 1931 mode places the white point exactly on the blackbody curve at every temperature.</li>
+            <li><strong>Real sunset and sunrise.</strong> Computed from the sun's position at your location, not a fixed clock time.</li>
+            <li><strong>Composes with calibration.</strong> Warming is baked into the same LUTs as your correction, so nothing flickers, bands, or fights.</li>
+          </ul>
+        </div>
+        <div class="feature-visual">
+          <!-- TODO: Drop in screenshot of the night mode schedule editor
+               (assets/screenshots/night-mode-schedule.png). Show the
+               sunset/sunrise schedule, fade duration, and app exclusion list. -->
+          <figure>
+            <div class="frame">
+              <div class="shot-placeholder" role="img" aria-label="Screenshot placeholder: the night mode schedule editor with sunset and sunrise times and app exclusions">
+                Screenshot: night mode schedule editor
+              </div>
+            </div>
+            <figcaption>Night mode: sunset/sunrise scheduling, smooth fades, and app exclusions.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Secondary features: calibration and tooling ============ -->
+    <section id="calibration">
+      <div class="wrap">
+        <span class="kicker">With a colorimeter</span>
+        <h2 style="margin-top: 0;">Go further: calibration that proves itself.</h2>
         <p class="section-lede">
-          Windows 11 composites SDR content into HDR with a transfer function almost no content was
-          mastered for, and most calibration tools were never built for the HDR pipeline at all.
-          Gloam works inside that pipeline instead of around it.
+          Everything above runs on Gloam's own native pipeline with zero dependencies. Add a
+          colorimeter and the same pipeline becomes a full display calibrator: ArgyllCMS is
+          downloaded automatically just to drive the meter, and the correction is installed as a
+          native Windows MHC2 profile and verified by measurement.
         </p>
 
-        <div class="feature-grid">
-          <div class="feature-card">
-            <span class="kicker">Calibration</span>
-            <h3>Colorimeter-driven, ArgyllCMS-based</h3>
-            <p>Measure with an X-Rite i1 Display or any ArgyllCMS-supported meter. Gloam runs the
-            whole flow hands-free: measure, build the correction, apply it, and re-measure through
-            the applied profile to prove it worked.</p>
+        <div class="more-grid">
+          <div class="more">
+            <h3>HDR-native, wire-exact</h3>
+            <p>Corrections install as a native MHC2 color profile applied by the Windows compositor
+            itself, persistently, in HDR and SDR. HDR runs measure true HDR-range patches through a
+            DirectX FP16 surface at exact PQ wire positions, far above SDR white.</p>
           </div>
 
-          <div class="feature-card">
-            <span class="kicker">HDR-native</span>
-            <h3>MHC2/PQ pipeline, wire-exact</h3>
-            <p>Corrections install as a native Windows MHC2 color profile applied by the compositor,
-            persistently, in HDR and SDR. HDR runs measure true HDR-range patches through a DirectX
-            FP16 surface at exact PQ wire positions, far above SDR white.</p>
+          <div class="more">
+            <h3>Hands-free measurement</h3>
+            <p>Connect an X-Rite i1 Display or any ArgyllCMS-supported meter and Gloam runs the
+            whole flow: measure, build the correction, apply it, and re-measure through the applied
+            profile to prove it worked.</p>
           </div>
 
-          <div class="feature-card">
-            <span class="kicker">Tone</span>
-            <h3>Per-monitor gamma with hotkeys</h3>
-            <p>Gamma 2.2, 2.4 (BT.1886), or Windows default, set independently per monitor and
-            switchable with global hotkeys. Fixes the washed-out shadows of Windows' SDR-in-HDR
-            mapping. A ramp guard silently restores the correction if a game or driver resets it.</p>
-          </div>
-
-          <div class="feature-card">
-            <span class="kicker">Comfort</span>
-            <h3>Night mode with scheduling</h3>
-            <p>Automatic warm-shift keyed to sunset and sunrise at your location, with smooth fades,
-            per-app exclusions, and per-monitor temperature offsets. Baked into the correction
-            pipeline, so it never fights Windows Night Light or your calibration.</p>
-          </div>
-
-          <div class="feature-card">
-            <span class="kicker">Proof</span>
-            <h3>Detailed verification</h3>
+          <div class="more">
+            <h3>Verification in depth</h3>
             <p>Native vs. calibrated dE2000 with histograms, worst and best patches, grayscale and
-            primaries breakdowns, and corrected-response charts. HDR verifications add a PQ tracking
-            sweep graded in absolute nits against ST.2084 and dE ITP (BT.2124).</p>
+            primaries breakdowns. HDR verifications add a PQ tracking sweep graded in absolute nits
+            against ST.2084 and dE ITP (BT.2124).</p>
           </div>
 
-          <div class="feature-card">
-            <span class="kicker">Records</span>
-            <h3>Report history and PDF export</h3>
-            <p>Every calibration produces a scored report that is kept in history, so you can track a
-            panel as it ages. Printer-friendly PDF export for sharing or archiving.</p>
+          <div class="more">
+            <h3>Reports and history</h3>
+            <p>Every calibration produces a scored report kept in history, so you can track a panel
+            as it ages, with an eyes-on A/B toggle and printer-friendly PDF export.</p>
           </div>
 
-          <div class="feature-card">
-            <span class="kicker">Scale</span>
-            <h3>Multi-monitor dashboard</h3>
-            <p>A grid view of every connected display with real EDID names, HDR/SDR status, current
-            gamma mode, and quick access to settings and calibration. Settings persist per monitor
-            and restore on startup.</p>
-          </div>
-
-          <div class="feature-card">
-            <span class="kicker">Accuracy</span>
+          <div class="more">
             <h3>Meter spectral corrections</h3>
             <p>An in-app browser for the DisplayCAL community corrections database (.ccss/.ccmx)
-            matches your meter to your panel's emission spectra. Essential on QD-OLED and wide-gamut
-            displays, where generic corrections misread the white point by several dE.</p>
+            matches your meter to your panel's emission spectra. Essential on QD-OLED and
+            wide-gamut displays.</p>
+          </div>
+
+          <div class="more">
+            <h3>Multi-monitor dashboard</h3>
+            <p>A grid view of every connected display with real EDID names, HDR/SDR status, current
+            gamma mode, and quick access to settings. Everything persists per monitor and restores
+            on startup.</p>
           </div>
         </div>
       </div>
@@ -123,15 +206,18 @@
     <!-- ============ Screenshots ============ -->
     <section id="screenshots">
       <div class="wrap">
-        <h2>See it</h2>
+        <span class="kicker">In the app</span>
+        <h2 style="margin-top: 0;">See it</h2>
         <div class="shots">
 
           <!-- TODO: Drop in screenshot of the multi-monitor dashboard
                (assets/screenshots/dashboard.png). Show 2+ monitors with real
                names, HDR/SDR badges, and gamma mode selectors visible. -->
-          <figure>
-            <div class="shot-placeholder" role="img" aria-label="Screenshot placeholder: the multi-monitor dashboard showing connected displays with HDR status and gamma controls">
-              Screenshot: multi-monitor dashboard
+          <figure class="shot-wide">
+            <div class="frame">
+              <div class="shot-placeholder" role="img" aria-label="Screenshot placeholder: the multi-monitor dashboard showing connected displays with HDR status and gamma controls">
+                Screenshot: multi-monitor dashboard
+              </div>
             </div>
             <figcaption>The dashboard: every display, its HDR state, and its correction at a glance.</figcaption>
           </figure>
@@ -140,8 +226,10 @@
                (assets/screenshots/calibration-report.png). Show the grade,
                before/after dE2000 numbers, and the A/B toggle button. -->
           <figure>
-            <div class="shot-placeholder" role="img" aria-label="Screenshot placeholder: a scored calibration report with before and after dE2000 accuracy and an A/B toggle">
-              Screenshot: calibration report
+            <div class="frame">
+              <div class="shot-placeholder" role="img" aria-label="Screenshot placeholder: a scored calibration report with before and after dE2000 accuracy and an A/B toggle">
+                Screenshot: calibration report
+              </div>
             </div>
             <figcaption>The scored report: measured before/after accuracy with an eyes-on A/B toggle.</figcaption>
           </figure>
@@ -150,28 +238,22 @@
                (assets/screenshots/verification-charts.png). Show dE histograms,
                worst/best patches, and the PQ tracking sweep chart if available. -->
           <figure>
-            <div class="shot-placeholder" role="img" aria-label="Screenshot placeholder: detailed verification charts with dE histograms and worst and best patches">
-              Screenshot: detailed verification charts
+            <div class="frame">
+              <div class="shot-placeholder" role="img" aria-label="Screenshot placeholder: detailed verification charts with dE histograms and worst and best patches">
+                Screenshot: detailed verification charts
+              </div>
             </div>
             <figcaption>Verification in depth: dE histograms, worst and best patches, PQ tracking.</figcaption>
-          </figure>
-
-          <!-- TODO: Drop in screenshot of the night mode schedule editor
-               (assets/screenshots/night-mode-schedule.png). Show the
-               sunset/sunrise schedule, fade duration, and app exclusion list. -->
-          <figure>
-            <div class="shot-placeholder" role="img" aria-label="Screenshot placeholder: the night mode schedule editor with sunset and sunrise times and app exclusions">
-              Screenshot: night mode schedule editor
-            </div>
-            <figcaption>Night mode: sunset/sunrise scheduling, smooth fades, and app exclusions.</figcaption>
           </figure>
 
           <!-- TODO: Drop in screenshot or render of the exported PDF report
                (assets/screenshots/pdf-report.png). Show the printer-friendly
                layout, ideally the first page with the grade and summary table. -->
           <figure>
-            <div class="shot-placeholder" role="img" aria-label="Screenshot placeholder: the printer-friendly PDF calibration report export">
-              Screenshot: PDF report export
+            <div class="frame">
+              <div class="shot-placeholder" role="img" aria-label="Screenshot placeholder: the printer-friendly PDF calibration report export">
+                Screenshot: PDF report export
+              </div>
             </div>
             <figcaption>Printer-friendly PDF export of any report in your calibration history.</figcaption>
           </figure>
@@ -183,31 +265,35 @@
     <!-- ============ Download ============ -->
     <section id="download">
       <div class="wrap">
-        <h2>Download</h2>
+        <span class="kicker">Get it</span>
+        <h2 style="margin-top: 0;">Download</h2>
         <p class="section-lede">
           Two builds, same application. Both are portable: extract the ZIP, run the executable,
           and enable "Start with Windows" from the tray icon if you want it.
         </p>
 
-        <div class="download-grid">
-          <div class="download-card recommended">
-            <span class="badge">Recommended</span>
-            <h3>Full</h3>
-            <p>Self-contained and ready offline.</p>
-            <ul>
-              <li>No .NET installation required</li>
-              <li>Bundles ArgyllCMS, so colorimeter calibration works immediately</li>
-              <li>Larger download (~160 MB)</li>
-            </ul>
-          </div>
-          <div class="download-card">
-            <h3>Lite</h3>
-            <p>A tiny download if you already have the runtime.</p>
-            <ul>
-              <li>Requires the .NET 8 Desktop Runtime</li>
-              <li>ArgyllCMS is downloaded automatically the first time calibration needs it</li>
-              <li>Very small download (~200 KB)</li>
-            </ul>
+        <div class="download-panel">
+          <div class="download-inner">
+            <div class="download-col">
+              <span class="badge">Recommended</span>
+              <h3>Full</h3>
+              <p>Self-contained and ready offline.</p>
+              <ul>
+                <li>No .NET installation required</li>
+                <li>Bundles ArgyllCMS, so colorimeter calibration works immediately</li>
+                <li>Larger download (~160 MB)</li>
+              </ul>
+            </div>
+            <div class="download-col">
+              <span class="badge badge-space" aria-hidden="true">Lite</span>
+              <h3>Lite</h3>
+              <p>A tiny download if you already have the runtime.</p>
+              <ul>
+                <li>Requires the .NET 8 Desktop Runtime</li>
+                <li>ArgyllCMS is downloaded automatically the first time calibration needs it</li>
+                <li>Very small download (~200 KB)</li>
+              </ul>
+            </div>
           </div>
         </div>
 
@@ -215,9 +301,11 @@
           <a class="btn btn-primary" href="https://github.com/davidtorcivia/gloam/releases/latest">Get the latest release</a>
         </p>
         <p class="download-note">
-          ArgyllCMS is optional for the core gamma correction; it is only needed for colorimeter
-          measurement. If you have DisplayCAL installed, Gloam detects and uses its bundled Argyll
-          binaries automatically.
+          Gloam's core features have no dependencies: the HDR gamma fix, night mode, and
+          per-monitor controls all run on the app's native pipeline. ArgyllCMS enters the picture
+          only for colorimeter measurement, where it is fetched automatically, and as an automatic
+          fallback if a driver ever rejects the native gamma call. If DisplayCAL is installed, its
+          bundled Argyll binaries are detected and used.
         </p>
       </div>
     </section>
@@ -225,40 +313,61 @@
     <!-- ============ FAQ ============ -->
     <section id="faq">
       <div class="wrap faq">
-        <h2>Questions</h2>
+        <span class="kicker">Before you ask</span>
+        <h2 style="margin-top: 0;">Questions</h2>
 
         <details>
-          <summary>Which colorimeters work?</summary>
+          <summary>Do I need a colorimeter at all?</summary>
           <div class="faq-body">
-            <p>Any meter supported by ArgyllCMS, which Gloam uses for measurement. The X-Rite
-            i1 Display family (i1 Display Pro, i1 Display Studio, and the Calibrite successors) is
-            the well-trodden path. Spectrophotometers supported by Argyll work too.</p>
-            <p>Whatever the meter, use a spectral correction matched to your panel type. Gloam's
-            built-in browser searches the DisplayCAL community corrections database and downloads
-            .ccss/.ccmx files directly. On QD-OLED and wide-gamut panels this is not optional:
-            generic corrections can misplace the white point by several dE.</p>
+            <p>No. The core feature that brought most users here, fixing Windows 11's washed-out
+            SDR-in-HDR shadows with proper gamma 2.2/2.4 decoding, is pure math and needs no
+            hardware. Night mode, per-monitor white point trims, and the dashboard all work without
+            a meter. A colorimeter is only required for measurement-based calibration and
+            verification.</p>
+          </div>
+        </details>
+
+        <details>
+          <summary>How is the night mode better than Windows Night Light?</summary>
+          <div class="faq-body">
+            <p>Three ways. First, the color math: Gloam blends color temperature in linear light,
+            where light physically mixes, and its accurate CIE 1931 mode keeps the white point
+            exactly on the Planckian locus as the screen warms. Night Light is a compositor-level
+            filter with none of that discipline.</p>
+            <p>Second, composition: Night Light fights external gamma corrections for control of
+            the pipeline. Gloam bakes the warm shift into the same high-precision LUTs as your
+            gamma preference and calibration before quantization, so the result is band-free and
+            conflict-free.</p>
+            <p>Third, scheduling: sunset and sunrise are computed from the sun's actual position at
+            your location, with configurable fades, per-app exclusions, and per-monitor temperature
+            offsets. Disable Night Light, let Gloam own the pipeline, and the war is over.</p>
           </div>
         </details>
 
         <details>
           <summary>Does it work in HDR? In SDR?</summary>
           <div class="faq-body">
-            <p>Both. HDR is the reason Gloam exists: the correction installs as a native MHC2
-            profile that the Windows compositor applies persistently, including with HDR enabled,
-            and HDR calibrations measure true HDR-range patches at exact PQ wire positions instead
-            of guessing how Windows maps SDR content onto the wire.</p>
+            <p>Both. HDR is the reason Gloam exists: the gamma fix operates inside the HDR signal
+            path, and colorimeter corrections install as a native MHC2 profile that the Windows
+            compositor applies persistently, including with HDR enabled. HDR calibrations measure
+            true HDR-range patches at exact PQ wire positions instead of guessing how Windows maps
+            SDR content onto the wire.</p>
             <p>SDR displays are fully supported as well, including gamma control, night mode, and
             full colorimeter calibration.</p>
           </div>
         </details>
 
         <details>
-          <summary>Is it free? Open source?</summary>
+          <summary>Which colorimeters work?</summary>
           <div class="faq-body">
-            <p>Yes and yes. Gloam is MIT licensed and the source is on
-            <a href="https://github.com/davidtorcivia/gloam">GitHub</a>. ArgyllCMS, which Gloam
-            invokes as a separate process for measurement, is AGPL v3; Gloam does not link
-            against it.</p>
+            <p>Any meter supported by ArgyllCMS, which Gloam downloads automatically and runs as a
+            separate process for the measurement step. The X-Rite i1 Display family (i1 Display
+            Pro, i1 Display Studio, and the Calibrite successors) is the well-trodden path.
+            Spectrophotometers supported by Argyll work too.</p>
+            <p>Whatever the meter, use a spectral correction matched to your panel type. Gloam's
+            built-in browser searches the DisplayCAL community corrections database and downloads
+            .ccss/.ccmx files directly. On QD-OLED and wide-gamut panels this is not optional:
+            generic corrections can misplace the white point by several dE.</p>
           </div>
         </details>
 
@@ -294,13 +403,12 @@
         </details>
 
         <details>
-          <summary>Do I need a colorimeter at all?</summary>
+          <summary>Is it free? Open source?</summary>
           <div class="faq-body">
-            <p>No. The core feature that brought most users here, fixing Windows 11's washed-out
-            SDR-in-HDR shadows with proper gamma 2.2/2.4 decoding, is pure math and needs no
-            hardware. Night mode, per-monitor white point trims, and the dashboard all work without
-            a meter. A colorimeter is only required for measurement-based calibration and
-            verification.</p>
+            <p>Yes and yes. Gloam is MIT licensed and the source is on
+            <a href="https://github.com/davidtorcivia/gloam">GitHub</a>. ArgyllCMS, which Gloam
+            invokes as a separate process for measurement, is AGPL v3; Gloam does not link
+            against it.</p>
           </div>
         </details>
 
@@ -309,9 +417,11 @@
 
   </main>
 
+  <div class="horizon" aria-hidden="true"></div>
+
   <footer class="site-footer">
     <div class="wrap">
-      <span>Gloam. MIT licensed. ArgyllCMS is AGPL v3 and runs as a separate process.</span>
+      <span>Gloam. MIT licensed. ArgyllCMS is AGPL v3, used only for measurement, and runs as a separate process.</span>
       <span class="footer-links">
         <a href="https://github.com/davidtorcivia/gloam">GitHub</a>
         <a href="https://github.com/davidtorcivia/gloam/releases/latest">Releases</a>

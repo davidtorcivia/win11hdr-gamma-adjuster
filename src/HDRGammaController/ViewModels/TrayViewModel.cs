@@ -362,10 +362,17 @@ namespace HDRGammaController.ViewModels
             MessageBox.Show("Panic Mode Activated: All gamma tables cleared.", "Gloam", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
+        private ActionViewModel? _startupItem;
+
+        private static string StartupLabel()
+            => StartupManager.IsStartupEnabled ? "✓ Start with Windows" : "Start with Windows";
+
         private void ToggleStartup()
         {
             StartupManager.IsStartupEnabled = !StartupManager.IsStartupEnabled;
-            RefreshMonitors(); // Refresh to update the checkmark
+            // Update the checkmark in place; rebuilding the menu would tear the
+            // items out from under the still-open tray menu.
+            if (_startupItem != null) _startupItem.Header = StartupLabel();
         }
         
         private void OnMonitorProfileChanged(MonitorInfo monitor, GammaMode mode)
@@ -516,9 +523,9 @@ namespace HDRGammaController.ViewModels
             }
             
             // Startup toggle with checkmark
-            string startupLabel = StartupManager.IsStartupEnabled ? "✓ Start with Windows" : "Start with Windows";
-            TrayItems.Add(new ActionViewModel(startupLabel, StartupCommand));
-            TrayItems.Add(new ActionViewModel("Refresh", RefreshCommand));
+            _startupItem = new ActionViewModel(StartupLabel(), StartupCommand, staysOpenOnClick: true);
+            TrayItems.Add(_startupItem);
+            TrayItems.Add(new ActionViewModel("Refresh", RefreshCommand, staysOpenOnClick: true));
             TrayItems.Add(new ActionViewModel("Exit", ExitCommand));
         }
     }
