@@ -1498,7 +1498,8 @@ namespace HDRGammaController
                 : $"{time.Minutes}:{time.Seconds:D2}";
         }
 
-        private static string GetPatchDescription(ColorPatch patch)
+        // Internal: the report window's verify sweep reuses the same fallback labels.
+        internal static string GetPatchDescription(ColorPatch patch)
         {
             // Generate a simple description based on RGB values
             var rgb = patch.DisplayRgb;

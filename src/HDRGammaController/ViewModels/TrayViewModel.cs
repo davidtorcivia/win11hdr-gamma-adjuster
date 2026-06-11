@@ -342,6 +342,22 @@ namespace HDRGammaController.ViewModels
 
         private void OpenCalibration()
         {
+            // Only one probe exists: if a calibration flow is already open (setup wizard,
+            // live calibration, or a report window mid-verify), bring it to the front
+            // instead of starting a second flow for another monitor.
+            foreach (Window window in Application.Current.Windows)
+            {
+                bool inUse = window is CalibrationSetupWindow or CalibrationWindow
+                    || (window is CalibrationReportWindow report && report.IsVerifyRunning);
+                if (!inUse) continue;
+
+                Log.Info($"TrayViewModel: calibration already in progress ({window.GetType().Name}); focusing the existing window instead of opening a new flow.");
+                if (window.WindowState == WindowState.Minimized)
+                    window.WindowState = WindowState.Normal;
+                window.Activate();
+                return;
+            }
+
             var setupWindow = new CalibrationSetupWindow(_activeMonitors, _settingsManager);
             var dialogResult = setupWindow.ShowDialog();
 

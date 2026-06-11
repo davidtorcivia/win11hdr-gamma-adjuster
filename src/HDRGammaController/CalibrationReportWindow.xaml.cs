@@ -29,6 +29,12 @@ namespace HDRGammaController
         private IReadOnlyList<MeasurementResult>? _verifyMeasurements;
         private System.Threading.CancellationTokenSource? _verifyCts;
 
+        /// <summary>
+        /// True while a verify sweep is measuring through the colorimeter. The tray uses
+        /// this to refuse a second calibration flow (only one probe exists).
+        /// </summary>
+        internal bool IsVerifyRunning => _verifyCts is { IsCancellationRequested: false };
+
         // Detailed-verification per-patch results (name, category, dE) in measurement order.
         // Set by a detailed sweep, or rebuilt from the persisted summary for historical
         // reports; everything the Detailed Verification section shows derives from this.
@@ -1318,7 +1324,9 @@ namespace HDRGammaController
                         Category = PatchCategory.General,
                     };
                     Vm.VerifyButtonContent = $"PQ tracking {i + 1}/{rungs.Count}…";
-                    patchWindow.SetProgress(i + 1, rungs.Count, p.Name);
+                    patchWindow.SetProgress(i + 1, rungs.Count, p.Name,
+                        i + 1 < rungs.Count ? $"PQ {rungs[i + 1]:F0} nits" : null,
+                        phase: "HDR PQ tracking");
                     wire.PresentNits(nits, nits, nits);
                     await Task.Delay(i == 0 ? 1200 : 600, token);
                     var m = await colorimeter.MeasureAsync(p, ctx.HdrMode, token);
@@ -1553,6 +1561,10 @@ namespace HDRGammaController
             await RunVerificationAsync();
         }
 
+        /// <summary>Strip label for a sweep patch: its name, or an RGB-derived description.</summary>
+        private static string PatchLabel(ColorPatch patch) =>
+            string.IsNullOrEmpty(patch.Name) ? CalibrationWindow.GetPatchDescription(patch) : patch.Name;
+
         /// <summary>
         /// The verify sweep itself (no prompts): measures the verification patches through
         /// whatever Windows is currently applying and fills the "after" row + grade.
@@ -1594,6 +1606,13 @@ namespace HDRGammaController
             {
                 patchWindow = new PatchDisplayWindow(ctx.Monitor, ctx.PatchSize, ctx.PatchOffsetX, ctx.PatchOffsetY);
                 patchWindow.AbortRequested += () => verifyCts.Cancel(); // Escape aborts the sweep
+                // On-strip Cancel goes through the same CTS as Escape, so cleanup (session
+                // end, window close, bypass restore) is identical: this method's finally.
+                patchWindow.EnableSweepControls(() =>
+                {
+                    if (_verifyCts is { IsCancellationRequested: false } cts)
+                        cts.Cancel();
+                });
                 patchWindow.Show();
 
                 // Detailed mode swaps in the extended patch set (fine grayscale, saturation
@@ -1608,8 +1627,10 @@ namespace HDRGammaController
                 for (int i = 0; i < patches.Count; i++)
                 {
                     var p = patches[i];
+                    var next = i + 1 < patches.Count ? patches[i + 1] : null;
                     Vm.VerifyButtonContent = $"Verifying {i + 1}/{patches.Count}…";
-                    patchWindow.SetProgress(i + 1, patches.Count, p.Name);
+                    patchWindow.SetProgress(i + 1, patches.Count, PatchLabel(p),
+                        next == null ? null : PatchLabel(next));
                     patchWindow.SetColor(p.DisplayRgb.R, p.DisplayRgb.G, p.DisplayRgb.B);
                     await Task.Delay(i == 0 ? 1200 : 500, verifyCts.Token); // settle (longer for the first patch)
                     results.Add(await colorimeter.MeasureAsync(p, ctx.HdrMode, verifyCts.Token));
