@@ -797,8 +797,126 @@ namespace HDRGammaController
 
             menu.Items.Add(reanchor);
             menu.Items.Add(trim);
+
+            if (_applyContext.HdrMode)
+            {
+                var hdrValidate = new System.Windows.Controls.MenuItem
+                {
+                    Header = "Validate HDR patch renderer (experimental)",
+                    ToolTip = "Certifies the FP16 scRGB patch path with the probe: checks that above-SDR-white " +
+                              "emission works and that the installed profile applies to it identically. Required " +
+                              "once before HDR-range calibration can be trusted.",
+                    IsEnabled = _applyContext.Colorimeter != null,
+                };
+                hdrValidate.Click += async (_, _) => await ValidateHdrRendererAsync();
+                menu.Items.Add(hdrValidate);
+            }
+
             menu.PlacementTarget = (UIElement)sender;
             menu.IsOpen = true;
+        }
+
+        /// <summary>
+        /// Probe-certification of the HDR-range patch path (see docs/hdr-patch-renderer-design.md):
+        ///  A) the FP16 swapchain at the SDR white level must measure ≈ the SDR window's white
+        ///     (same pipeline, same profile application);
+        ///  B) at 2× SDR white it must measure well ABOVE the SDR ceiling (the slider must not
+        ///     clamp values above 1.0).
+        /// Both passing means HDR-range patch sets can be trusted for calibration/verify.
+        /// </summary>
+        private async Task ValidateHdrRendererAsync()
+        {
+            if (_applyContext is not { Colorimeter: { } colorimeter } ctx) return;
+            if (MessageBox.Show(
+                    "Place the probe on the display, then press Yes.\n\n" +
+                    "Three short measurements: SDR white, the FP16 renderer at the same level, " +
+                    "and the FP16 renderer at double that level (briefly bright).",
+                    "Validate HDR Renderer", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+                return;
+
+            ApplyButton.IsEnabled = false;
+            VerifyButton.IsEnabled = false;
+            PatchDisplayWindow? surround = null;
+            HdrPatchRenderer? renderer = null;
+            bool bypassed = false;
+            var whitePatch = new ColorPatch { Name = "White", DisplayRgb = new LinearRgb(1, 1, 1), Category = PatchCategory.Grayscale };
+            try
+            {
+                if (ctx.StateManager != null)
+                {
+                    try { ctx.StateManager.EnterBypassMode(ctx.Monitor, ctx.PreviousGammaMode, ctx.PreviousSettings); bypassed = true; }
+                    catch { }
+                }
+
+                surround = new PatchDisplayWindow(ctx.Monitor, ctx.PatchSize, ctx.PatchOffsetX, ctx.PatchOffsetY);
+                surround.Show();
+                await colorimeter.BeginMeasurementSessionAsync(hdrMode: true);
+
+                // 1) SDR baseline through the normal window.
+                surround.SetProgress(1, 3, "SDR white (baseline)");
+                surround.SetColor(1, 1, 1);
+                await Task.Delay(1500);
+                var sdr = await colorimeter.MeasureAsync(whitePatch, true);
+
+                // Patch rectangle in pixels (same placement as the surround's patch).
+                var b = ctx.Monitor.MonitorBounds;
+                int size = (int)ctx.PatchSize;
+                int px = b.Left + (b.Right - b.Left - size) / 2 + (int)ctx.PatchOffsetX;
+                int py = b.Top + (b.Bottom - b.Top - size) / 2 + (int)ctx.PatchOffsetY;
+
+                surround.SetColor(0, 0, 0); // black behind the FP16 window
+                renderer = new HdrPatchRenderer(px, py, size, size);
+                Log.Info($"HDR renderer created; scRGB colorspace support reported: {renderer.ScRgbSupported}");
+
+                // 2) FP16 at the SDR white level - must match the SDR baseline.
+                surround.SetProgress(2, 3, "FP16 at SDR white level");
+                renderer.PresentNits(sdr.Xyz.Y, sdr.Xyz.Y, sdr.Xyz.Y);
+                await Task.Delay(1500);
+                var hdrSame = await colorimeter.MeasureAsync(whitePatch, true);
+
+                // 3) FP16 at 2x - must exceed the SDR ceiling (capped below panel peak).
+                double targetHigh = Math.Min(sdr.Xyz.Y * 2.0,
+                    ctx.Monitor.HdrPeakNits > 50 ? ctx.Monitor.HdrPeakNits * 0.9 : sdr.Xyz.Y * 2.0);
+                surround.SetProgress(3, 3, $"FP16 at {targetHigh:F0} nits");
+                renderer.PresentNits(targetHigh, targetHigh, targetHigh);
+                await Task.Delay(1500);
+                var hdrHigh = await colorimeter.MeasureAsync(whitePatch, true);
+
+                // Verdicts.
+                double sameRatio = hdrSame.Xyz.Y / Math.Max(sdr.Xyz.Y, 1e-6);
+                double dxSame = Math.Abs(hdrSame.Chromaticity.X - sdr.Chromaticity.X);
+                double dySame = Math.Abs(hdrSame.Chromaticity.Y - sdr.Chromaticity.Y);
+                bool passPipeline = sameRatio > 0.90 && sameRatio < 1.10 && dxSame < 0.006 && dySame < 0.006;
+                bool passRange = hdrHigh.Xyz.Y > sdr.Xyz.Y * 1.4;
+
+                string report =
+                    $"SDR white baseline:   {sdr.Xyz.Y:F1} nits  ({sdr.Chromaticity.X:F4}, {sdr.Chromaticity.Y:F4})\n" +
+                    $"FP16 at same level:   {hdrSame.Xyz.Y:F1} nits  ({hdrSame.Chromaticity.X:F4}, {hdrSame.Chromaticity.Y:F4})  ratio {sameRatio:F3}\n" +
+                    $"FP16 at {targetHigh:F0} nits:    {hdrHigh.Xyz.Y:F1} nits measured\n\n" +
+                    $"Pipeline parity (profile applies to FP16): {(passPipeline ? "PASS" : "FAIL")}\n" +
+                    $"Above-SDR-white emission:                  {(passRange ? "PASS" : "FAIL")}\n\n" +
+                    (passPipeline && passRange
+                        ? "The HDR-range patch path is trustworthy on this system. HDR-range calibration can be built on it."
+                        : "Do NOT trust HDR-range measurements on this system yet - send the log for diagnosis.");
+                Log.Info($"HDR renderer validation:\n{report}");
+                MessageBox.Show(report, "HDR Renderer Validation",
+                    MessageBoxButton.OK, passPipeline && passRange ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            }
+            catch (Exception ex)
+            {
+                Log.Info($"HDR renderer validation failed: {ex}");
+                MessageBox.Show($"HDR renderer validation failed:\n\n{ex.Message}",
+                    "HDR Renderer Validation", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                try { await colorimeter.EndMeasurementSessionAsync(); } catch { }
+                renderer?.Dispose();
+                surround?.Close();
+                if (bypassed) { try { ctx.StateManager!.RestorePreviousState(); } catch { } }
+                ApplyButton.IsEnabled = true;
+                VerifyButton.IsEnabled = true;
+            }
         }
 
         /// <summary>
