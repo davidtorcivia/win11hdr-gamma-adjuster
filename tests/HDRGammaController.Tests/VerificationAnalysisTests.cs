@@ -78,6 +78,52 @@ namespace HDRGammaController.Tests
             Assert.Equal("B", worst[0].Name);
         }
 
+        // ------------------------------------------------------------------ best patches
+
+        [Fact]
+        public void BestPatches_SortsAscendingAndCapsAtTen()
+        {
+            var patches = Enumerable.Range(0, 15)
+                .Select(i => new PatchDeltaE($"Patch {i}", PatchCategory.General, i * 0.5))
+                .ToList();
+
+            var best = VerificationAnalysis.BestPatches(patches);
+
+            Assert.Equal(10, best.Count);
+            Assert.Equal("Patch 0", best[0].Name);              // smallest dE first
+            Assert.Equal(0.0, best[0].DeltaE, 9);
+            for (int i = 1; i < best.Count; i++)
+                Assert.True(best[i].DeltaE >= best[i - 1].DeltaE, "must be sorted ascending");
+        }
+
+        [Fact]
+        public void BestPatches_FewerThanCap_ReturnsAll()
+        {
+            var patches = new[]
+            {
+                new PatchDeltaE("A", PatchCategory.Grayscale, 1.0),
+                new PatchDeltaE("B", PatchCategory.Primary, 3.0),
+            };
+
+            var best = VerificationAnalysis.BestPatches(patches);
+
+            Assert.Equal(2, best.Count);
+            Assert.Equal("A", best[0].Name);
+        }
+
+        [Fact]
+        public void BestAndWorst_AreDisjointWhenEnoughPatches()
+        {
+            var patches = Enumerable.Range(0, 39)
+                .Select(i => new PatchDeltaE($"Patch {i}", PatchCategory.General, i * 0.1))
+                .ToList();
+
+            var worstNames = VerificationAnalysis.WorstPatches(patches).Select(p => p.Name).ToHashSet();
+            var bestNames = VerificationAnalysis.BestPatches(patches).Select(p => p.Name).ToHashSet();
+
+            Assert.Empty(worstNames.Intersect(bestNames));
+        }
+
         // ------------------------------------------------------------------ category breakdown
 
         [Fact]

@@ -52,6 +52,13 @@ namespace HDRGammaController.ViewModels
         private bool _soundOnCapture = true;
         public bool SoundOnCapture { get => _soundOnCapture; set => SetProperty(ref _soundOnCapture, value); }
 
+        /// <summary>
+        /// Pre-checks "Detailed verification" in the report window, so the automatic
+        /// post-apply verify runs the extended sweep without another click.
+        /// </summary>
+        private bool _runDetailedVerify;
+        public bool RunDetailedVerify { get => _runDetailedVerify; set => SetProperty(ref _runDetailedVerify, value); }
+
         private bool _showBypassWarning;
         public bool ShowBypassWarning { get => _showBypassWarning; set => SetProperty(ref _showBypassWarning, value); }
 

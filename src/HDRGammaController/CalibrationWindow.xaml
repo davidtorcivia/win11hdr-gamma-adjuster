@@ -420,6 +420,9 @@
                               Foreground="White" IsChecked="{Binding SoundOnCompletion}" Margin="0,4"/>
                     <CheckBox Content="Play sound on each capture"
                               Foreground="White" IsChecked="{Binding SoundOnCapture}" Margin="0,4"/>
+                    <CheckBox Content="Run detailed verification after calibration"
+                              ToolTip="The automatic post-apply verification runs the extended 39-patch sweep (fine grayscale, saturation ramps, memory colors) instead of the quick one. Takes several times longer, and adds per-patch charts and worst/best patch lists to the report."
+                              Foreground="White" IsChecked="{Binding RunDetailedVerify}" Margin="0,4"/>
                 </StackPanel>
             </ScrollViewer>
 

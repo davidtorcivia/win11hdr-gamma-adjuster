@@ -123,9 +123,10 @@ namespace HDRGammaController
             if (_metrics != null)
                 PersistReportSummary(after: null);
 
-            // Charts need real canvas sizes, which exist only after layout.
-            Loaded += (_, _) => { RenderCharts(); RenderDetailedCharts(); };
-            SizeChanged += (_, _) => { RenderCharts(); RenderDetailedCharts(); };
+            // Charts need real canvas sizes, which exist only after layout. RenderCharts()
+            // redraws the detailed charts too when detailed results exist.
+            Loaded += (_, _) => RenderCharts();
+            SizeChanged += (_, _) => RenderCharts();
 
             Loaded += async (_, _) =>
             {
@@ -696,6 +697,7 @@ namespace HDRGammaController
                     detailedSection = new ReportPrintBuilder.DetailedPrintSection(
                         detailedFigures,
                         VerificationAnalysis.WorstPatches(detailedResults),
+                        VerificationAnalysis.BestPatches(detailedResults),
                         VerificationAnalysis.ComputeCategoryBreakdown(detailedResults).ToDisplayText());
                 }
 
@@ -723,14 +725,33 @@ namespace HDRGammaController
             }
             catch (Exception ex)
             {
+                // PTS (the FlowDocument pagination engine) surfaces native failures as
+                // non-CLS exceptions, which the CLR delivers wrapped. Unwrap and log the
+                // FULL exception so the next failure pinpoints the faulting element.
+                if (ex is System.Runtime.CompilerServices.RuntimeWrappedException rwe)
+                {
+                    Log.Error("CalibrationReportWindow: print failed with RuntimeWrappedException. " +
+                              $"Wrapped: {rwe.WrappedException?.ToString() ?? "<null>"}\nOuter: {ex}");
+                }
+                else
+                {
+                    Log.Error($"CalibrationReportWindow: print failed: {ex}");
+                }
                 ConfirmDialog.Info(this, "Export Report", $"Could not print the report:\n\n{ex.Message}");
             }
         }
 
-        /// <summary>Draws the on-screen charts with the dark report theme.</summary>
+        /// <summary>
+        /// Draws the on-screen charts with the dark report theme: the four main charts plus,
+        /// when detailed results exist, the two detailed charts - so every layout change
+        /// (Loaded, SizeChanged) and every verify completion regenerates all of them together.
+        /// </summary>
         private void RenderCharts()
-            => RenderCharts(ToneCanvas, GammaCanvas, BalanceCanvas, GamutCanvas,
+        {
+            RenderCharts(ToneCanvas, GammaCanvas, BalanceCanvas, GamutCanvas,
                 CalibrationCharts.ChartPalette.Dark);
+            RenderDetailedCharts();
+        }
 
         /// <summary>
         /// Draws all four report charts into the given canvases with the given palette.
@@ -926,29 +947,40 @@ namespace HDRGammaController
 
         /// <summary>
         /// Fills the Detailed Verification section from <see cref="_detailedPatchResults"/>:
-        /// worst-10 list, category breakdown text, section visibility and both charts.
-        /// Works identically for a fresh detailed sweep and a historical restore.
+        /// worst-10 and best-10 lists, category breakdown text, section visibility and both
+        /// charts. Works identically for a fresh detailed sweep and a historical restore.
         /// </summary>
         private void PresentDetailedResults()
         {
             if (_detailedPatchResults is not { Count: > 0 } results) return;
 
-            Vm.WorstPatches.Clear();
-            int rank = 1;
-            foreach (var p in VerificationAnalysis.WorstPatches(results))
+            static void Fill(
+                System.Collections.ObjectModel.ObservableCollection<CalibrationReportViewModel.PatchListItem> list,
+                IEnumerable<PatchDeltaE> ranked)
             {
-                Vm.WorstPatches.Add(new CalibrationReportViewModel.WorstPatchItem(
-                    $"{rank++}.", p.Name, $"{p.DeltaE:F2}",
-                    CalibrationReportViewModel.DeltaEBrush(p.DeltaE)));
+                list.Clear();
+                int rank = 1;
+                foreach (var p in ranked)
+                {
+                    list.Add(new CalibrationReportViewModel.PatchListItem(
+                        $"{rank++}.", p.Name, $"{p.DeltaE:F2}",
+                        CalibrationReportViewModel.DeltaEBrush(p.DeltaE)));
+                }
             }
+            Fill(Vm.WorstPatches, VerificationAnalysis.WorstPatches(results));
+            Fill(Vm.BestPatches, VerificationAnalysis.BestPatches(results));
 
             Vm.CategoryBreakdownText =
                 VerificationAnalysis.ComputeCategoryBreakdown(results).ToDisplayText();
             Vm.HasDetailedResults = true;
 
-            // The canvases may not be laid out yet (first show); the Loaded/SizeChanged
-            // render picks them up then, and this call covers the post-sweep refresh.
-            RenderDetailedCharts();
+            // The card just became visible (BoolToVis), so its canvases have not been laid
+            // out yet - drawing now would see ActualWidth 0 and render blank. Defer the draw
+            // until after the pending layout pass; later layout changes re-render through
+            // the shared RenderCharts path.
+            Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.Loaded,
+                new Action(RenderDetailedCharts));
         }
 
         /// <summary>Draws the on-screen detailed charts with the dark report theme.</summary>
@@ -1618,6 +1650,7 @@ namespace HDRGammaController
                     _detailedPatchResults = null;
                     Vm.HasDetailedResults = false;
                     Vm.WorstPatches.Clear();
+                    Vm.BestPatches.Clear();
                 }
 
                 // Refresh recommendations with verify-aware guidance.

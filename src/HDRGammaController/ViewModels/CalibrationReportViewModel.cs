@@ -188,10 +188,12 @@ namespace HDRGammaController.ViewModels
         private string _categoryBreakdownText = "";
         public string CategoryBreakdownText { get => _categoryBreakdownText; set => SetProperty(ref _categoryBreakdownText, value); }
 
-        /// <summary>One row of the worst-10 list: rank, patch name and color-coded ΔE.</summary>
-        public sealed record WorstPatchItem(string Rank, string Name, string DeltaEText, Brush DeltaEBrush);
+        /// <summary>One row of the worst-10 / best-10 lists: rank, patch name and color-coded ΔE.</summary>
+        public sealed record PatchListItem(string Rank, string Name, string DeltaEText, Brush DeltaEBrush);
 
-        public ObservableCollection<WorstPatchItem> WorstPatches { get; } = new();
+        public ObservableCollection<PatchListItem> WorstPatches { get; } = new();
+
+        public ObservableCollection<PatchListItem> BestPatches { get; } = new();
 
         #endregion
 

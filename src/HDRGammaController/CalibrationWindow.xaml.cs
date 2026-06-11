@@ -1255,6 +1255,10 @@ namespace HDRGammaController
                 profile, _calibrationMetrics, _displayCharacterization, _generatedLut,
                 _calibrationResult?.Measurements);
 
+            // Pre-check "Detailed verification" so the auto-verify on load (AutoApplyOnLoad)
+            // runs the extended sweep the user asked for on the finalize screen.
+            reportWindow.Vm.IsDetailedVerifyChecked = Vm.RunDetailedVerify;
+
             // Closed-loop before/after: the real measured improvement, not just the native error.
             if (_calibrationResult is { ClosedLoopRan: true,
                     NativeResidualDeltaE: double beforeDe, CorrectedResidualDeltaE: double afterDe })

@@ -6,6 +6,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- WPF is needed by the print-pagination regression tests, which drive the
+         FlowDocument paginator (PTS) exactly like the report's Export Report button. -->
+    <UseWPF>true</UseWPF>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,6 +26,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\HDRGammaController.Core\HDRGammaController.Core.csproj" />
+    <ProjectReference Include="..\..\src\HDRGammaController\HDRGammaController.csproj" />
   </ItemGroup>
 
 </Project>

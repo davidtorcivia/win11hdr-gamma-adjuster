@@ -175,6 +175,13 @@ namespace HDRGammaController.Core.Calibration
             return patches.OrderByDescending(p => p.DeltaE).Take(count).ToList();
         }
 
+        /// <summary>The best patches by ΔE, lowest first, at most <paramref name="count"/>.</summary>
+        public static IReadOnlyList<PatchDeltaE> BestPatches(
+            IEnumerable<PatchDeltaE> patches, int count = 10)
+        {
+            return patches.OrderBy(p => p.DeltaE).Take(count).ToList();
+        }
+
         /// <summary>
         /// Per-category averages. Skin tones count as memory colors (that is what they are);
         /// categories not present in the detailed set (secondaries, grid, ...) are ignored.

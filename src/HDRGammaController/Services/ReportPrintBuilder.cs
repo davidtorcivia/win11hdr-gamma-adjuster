@@ -42,12 +42,13 @@ namespace HDRGammaController.Services
 
         /// <summary>
         /// Everything the printed Detailed Verification section needs: the two re-rendered
-        /// light-palette figures (histogram + per-patch), the worst patches and the category
-        /// breakdown line. Null when no detailed sweep data exists.
+        /// light-palette figures (histogram + per-patch), the worst and best patches and the
+        /// category breakdown line. Null when no detailed sweep data exists.
         /// </summary>
         public sealed record DetailedPrintSection(
             IReadOnlyList<ChartFigure> Charts,
             IReadOnlyList<HDRGammaController.Core.Calibration.PatchDeltaE> WorstPatches,
+            IReadOnlyList<HDRGammaController.Core.Calibration.PatchDeltaE> BestPatches,
             string CategoryBreakdownText);
 
         /// <summary>
@@ -167,13 +168,15 @@ namespace HDRGammaController.Services
             table.RowGroups[0].Rows.Add(row);
             doc.Blocks.Add(table);
 
-            // Accent rule under the header.
+            // Accent rule under the header. No content and no FontSize hack: PTS computes
+            // line metrics for every paragraph, and a degenerate FontSize is exactly the
+            // kind of edge case its native pagination chokes on. A default-size empty
+            // paragraph with only a bottom border prints as a clean rule.
             doc.Blocks.Add(new Paragraph
             {
                 BorderBrush = Accent,
                 BorderThickness = new Thickness(0, 0, 0, 2),
-                Margin = new Thickness(0, 6, 0, 14),
-                FontSize = 1,
+                Margin = new Thickness(0, 0, 0, 14),
             });
         }
 
@@ -286,7 +289,8 @@ namespace HDRGammaController.Services
         private static void AddChartsSection(
             FlowDocument doc, IReadOnlyList<ChartFigure>? charts, bool isHistorical)
         {
-            doc.Blocks.Add(SectionHeading("Measurement Charts"));
+            // No KeepWithNext: a figure table may follow (see SectionHeading remarks).
+            doc.Blocks.Add(SectionHeading("Measurement Charts", keepWithNext: false));
 
             if (charts == null || charts.Count == 0)
             {
@@ -300,18 +304,29 @@ namespace HDRGammaController.Services
                 return;
             }
 
-            // 2x2 figure grid. Each cell carries its caption above the captured chart so a
-            // page break between rows never separates a figure from its title.
+            doc.Blocks.Add(FigureGrid(charts));
+        }
+
+        /// <summary>
+        /// Two-up figure grid. Each cell carries its caption above the captured chart so a
+        /// page break between rows never separates a figure from its title. An odd figure
+        /// count gets a filler cell with an empty Paragraph - PTS dislikes cells with zero
+        /// blocks.
+        /// </summary>
+        private static Table FigureGrid(IReadOnlyList<ChartFigure> charts)
+        {
             var table = BareTable(new[] { 1.0, 1.0 });
             var group = table.RowGroups[0];
             for (int i = 0; i < charts.Count; i += 2)
             {
                 var row = new TableRow();
                 row.Cells.Add(FigureCell(charts[i]));
-                row.Cells.Add(i + 1 < charts.Count ? FigureCell(charts[i + 1]) : new TableCell());
+                row.Cells.Add(i + 1 < charts.Count
+                    ? FigureCell(charts[i + 1])
+                    : new TableCell(new Paragraph()));
                 group.Rows.Add(row);
             }
-            doc.Blocks.Add(table);
+            return table;
         }
 
         private static TableCell FigureCell(ChartFigure figure)
@@ -341,22 +356,13 @@ namespace HDRGammaController.Services
 
         private static void AddDetailedSection(FlowDocument doc, DetailedPrintSection detailed)
         {
-            doc.Blocks.Add(SectionHeading("Detailed Verification"));
+            // No KeepWithNext on this heading: figure rows (BlockUIContainers) follow, and
+            // keep chains around images are a known PTS pagination hazard.
+            doc.Blocks.Add(SectionHeading("Detailed Verification", keepWithNext: false));
 
             // Two-up figure grid, same layout as the main charts section.
             if (detailed.Charts.Count > 0)
-            {
-                var figures = BareTable(new[] { 1.0, 1.0 });
-                var figureGroup = figures.RowGroups[0];
-                for (int i = 0; i < detailed.Charts.Count; i += 2)
-                {
-                    var row = new TableRow();
-                    row.Cells.Add(FigureCell(detailed.Charts[i]));
-                    row.Cells.Add(i + 1 < detailed.Charts.Count ? FigureCell(detailed.Charts[i + 1]) : new TableCell());
-                    figureGroup.Rows.Add(row);
-                }
-                doc.Blocks.Add(figures);
-            }
+                doc.Blocks.Add(FigureGrid(detailed.Charts));
 
             doc.Blocks.Add(new Paragraph(new Run(detailed.CategoryBreakdownText))
             {
@@ -364,14 +370,23 @@ namespace HDRGammaController.Services
                 Margin = new Thickness(0, 4, 0, 8),
             });
 
-            if (detailed.WorstPatches.Count == 0) return;
+            if (detailed.WorstPatches.Count > 0)
+                AddPatchTable(doc, "Worst patches", detailed.WorstPatches);
+            if (detailed.BestPatches.Count > 0)
+                AddPatchTable(doc, "Best patches", detailed.BestPatches);
+        }
 
-            doc.Blocks.Add(new Paragraph(new Run("Worst patches"))
+        /// <summary>One ranked patch table (worst or best) with its small heading.</summary>
+        private static void AddPatchTable(
+            FlowDocument doc, string title,
+            IReadOnlyList<HDRGammaController.Core.Calibration.PatchDeltaE> patches)
+        {
+            doc.Blocks.Add(new Paragraph(new Run(title))
             {
                 FontSize = 11,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Muted,
-                Margin = new Thickness(0, 0, 0, 2),
+                Margin = new Thickness(0, 6, 0, 2),
                 KeepWithNext = true,
             });
 
@@ -381,7 +396,7 @@ namespace HDRGammaController.Services
             header.Cells[1].TextAlignment = TextAlignment.Left; // patch names print left-aligned
             group.Rows.Add(header);
             int rank = 1;
-            foreach (var patch in detailed.WorstPatches)
+            foreach (var patch in patches)
             {
                 var row = new TableRow();
                 row.Cells.Add(Cell($"{rank++}", Muted, size: 10.5));
@@ -456,7 +471,10 @@ namespace HDRGammaController.Services
 
         // ------------------------------------------------------------------ primitives
 
-        private static Paragraph SectionHeading(string text) => new(new Run(text))
+        // keepWithNext defaults on so a heading never strands at a page bottom, but MUST be
+        // off for headings followed by figure tables: keep chains around BlockUIContainers
+        // (images) are a known PTS pagination hazard.
+        private static Paragraph SectionHeading(string text, bool keepWithNext = true) => new(new Run(text))
         {
             FontSize = 15,
             FontWeight = FontWeights.SemiBold,
@@ -465,7 +483,7 @@ namespace HDRGammaController.Services
             BorderThickness = new Thickness(0, 0, 0, 1),
             Padding = new Thickness(0, 0, 0, 3),
             Margin = new Thickness(0, 16, 0, 8),
-            KeepWithNext = true,
+            KeepWithNext = keepWithNext,
         };
 
         private static Table BareTable(IReadOnlyList<double> starWidths)
