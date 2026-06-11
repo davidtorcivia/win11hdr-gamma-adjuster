@@ -32,6 +32,7 @@ namespace HDRGammaController
         private readonly SettingsManager? _settings;
         private readonly TextBox _output;
         private readonly Button _runButton;
+        private TaskCompletionSource<bool>? _positionDone;
 
         public HdrSanityCheckWindow(MonitorInfo monitor, ColorimeterService colorimeter, SettingsManager? settings)
         {
@@ -74,7 +75,14 @@ namespace HDRGammaController
                 BorderThickness = new Thickness(0),
                 HorizontalAlignment = HorizontalAlignment.Right,
             };
-            _runButton.Click += async (_, _) => await RunAsync();
+            _runButton.Click += async (_, _) =>
+            {
+                // During the positioning phase this button doubles as "Continue".
+                if (_positionDone is { Task.IsCompleted: false })
+                    _positionDone.TrySetResult(true);
+                else
+                    await RunAsync();
+            };
 
             var root = new Grid { Margin = new Thickness(16) };
             root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -102,7 +110,8 @@ namespace HDRGammaController
                 return;
             }
 
-            _runButton.IsEnabled = false;
+            // Button stays enabled through the positioning phase (it doubles as Continue);
+            // it's disabled once measurement actually starts.
             _output.Clear();
             PatchDisplayWindow? surround = null;
             HdrPatchRenderer? renderer = null;
@@ -124,14 +133,28 @@ namespace HDRGammaController
                 Say($"Monitor: {_monitor.FriendlyName}  SDR white {_monitor.SdrWhiteLevel:F0} nits  panel peak {_monitor.HdrPeakNits:F0} nits");
                 Say(new string('-', 86));
 
-                // Surround + patch geometry (600px patch, centered).
+                // POSITIONING PHASE: same drag interaction as the calibration window — the
+                // user puts the square under the probe, then presses Continue here.
                 surround = new PatchDisplayWindow(_monitor);
                 surround.Show();
+                surround.SetColor(0.5, 0.5, 0.5);
+                surround.SetProgress(0, 5, "Drag the square under the probe, then press Continue");
+                surround.EnableDrag();
+                _positionDone = new TaskCompletionSource<bool>();
+                _runButton.Content = "Continue (square is under the probe)";
+                Say("Position the gray square under the probe (drag it on the display), then press Continue…");
+                await _positionDone.Task;
+                _positionDone = null;
+                _runButton.Content = "Run Sanity Check";
+                _runButton.IsEnabled = false;
+                surround.DisableDrag();
                 surround.SetColor(0, 0, 0);
+
+                // Patch geometry in pixels: center + the user's drag offset.
                 var b = _monitor.MonitorBounds;
                 const int size = 600;
-                int px = b.Left + (b.Right - b.Left - size) / 2;
-                int py = b.Top + (b.Bottom - b.Top - size) / 2;
+                int px = b.Left + (b.Right - b.Left - size) / 2 + (int)surround.OffsetX;
+                int py = b.Top + (b.Bottom - b.Top - size) / 2 + (int)surround.OffsetY;
 
                 await _colorimeter.BeginMeasurementSessionAsync(hdrMode: true);
 

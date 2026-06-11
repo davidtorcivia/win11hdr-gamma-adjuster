@@ -36,6 +36,56 @@ namespace HDRGammaController
         /// <summary>Raised when the user presses Escape on the patch window (abort the sweep).</summary>
         public event Action? AbortRequested;
 
+        /// <summary>Current patch placement offset from center, in pixels.</summary>
+        public double OffsetX { get; private set; }
+        public double OffsetY { get; private set; }
+
+        private bool _dragEnabled;
+        private bool _dragging;
+        private Point _dragStart;
+        private double _dragStartX, _dragStartY;
+
+        /// <summary>
+        /// Lets the user drag the patch to the probe position — the same interaction as the
+        /// calibration window's positioning step. Read the result from OffsetX/OffsetY.
+        /// </summary>
+        public void EnableDrag()
+        {
+            if (_dragEnabled) return;
+            _dragEnabled = true;
+            Cursor = System.Windows.Input.Cursors.SizeAll;
+
+            MouseLeftButtonDown += (_, e) =>
+            {
+                if (!_dragEnabled) return;
+                _dragging = true;
+                _dragStart = e.GetPosition(this);
+                _dragStartX = OffsetX;
+                _dragStartY = OffsetY;
+                CaptureMouse();
+            };
+            MouseMove += (_, e) =>
+            {
+                if (!_dragging) return;
+                var p = e.GetPosition(this);
+                OffsetX = _dragStartX + (p.X - _dragStart.X);
+                OffsetY = _dragStartY + (p.Y - _dragStart.Y);
+                _patch.RenderTransform = new TranslateTransform(OffsetX, OffsetY);
+            };
+            MouseLeftButtonUp += (_, _) =>
+            {
+                if (!_dragging) return;
+                _dragging = false;
+                ReleaseMouseCapture();
+            };
+        }
+
+        public void DisableDrag()
+        {
+            _dragEnabled = false;
+            Cursor = null;
+        }
+
         public PatchDisplayWindow(MonitorInfo monitor, double patchSize = 600, double offsetX = 0, double offsetY = 0)
         {
             WindowStyle = WindowStyle.None;
@@ -85,6 +135,8 @@ namespace HDRGammaController
                 Height = 600;
             }
 
+            OffsetX = offsetX;
+            OffsetY = offsetY;
             _patch = new Border
             {
                 Width = patchSize,
