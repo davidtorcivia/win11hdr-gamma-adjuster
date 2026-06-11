@@ -281,6 +281,70 @@ namespace HDRGammaController.Tests
         }
 
         [Fact]
+        public void Detailed_ExpectedValues_MatchVerifierGrading_ForHdrPqTarget()
+        {
+            // Audit pin: every category of the detailed HDR sweep must grade through the
+            // SAME expectation math as the grayscale/primaries path. A pipeline that
+            // reproduces the attached target XYZ exactly (on the absolute colorimeter
+            // scale) must therefore score ~0 in EVERY category - if the saturation or
+            // memory-color expectations ever diverge from CalibrationVerifier.ComputeMetrics
+            // (content curve, target primaries or peak normalization), this fails.
+            var target = StandardTargets.Rec709Pq;
+            var patches = VerificationPatchSets.Detailed(target, hdrMode: true);
+
+            var measurements = patches.Select(p => new MeasurementResult
+            {
+                Patch = p,
+                Xyz = new CieXyz( // SDR white at ~250 nits on the HDR wire
+                    p.TargetXyz!.Value.X * 250, p.TargetXyz.Value.Y * 250, p.TargetXyz.Value.Z * 250),
+            }).ToList();
+
+            var metrics = CalibrationVerifier.ComputeMetrics(measurements, target);
+            var breakdown = VerificationAnalysis.ComputeCategoryBreakdown(metrics.PatchResults);
+
+            Assert.All(metrics.PatchResults, r => Assert.True(r.DeltaE < 0.05,
+                $"expectation mismatch between patch set and verifier: {r.Name} dE {r.DeltaE:F3}"));
+            Assert.True(breakdown.SaturationDeltaE!.Value < 0.05);
+            Assert.True(breakdown.MemoryColorsDeltaE!.Value < 0.05);
+            Assert.True(breakdown.GrayscaleDeltaE!.Value < 0.05);
+            Assert.True(breakdown.PrimariesDeltaE!.Value < 0.05);
+        }
+
+        // ------------------------------------------------------------------ HDR category caveat
+
+        [Fact]
+        public void CategoryCaveat_SdrSweep_ReturnsNull()
+        {
+            Assert.Null(VerificationAnalysis.CategoryCaveat(hdrMode: false, whitePointOnly: false));
+            Assert.Null(VerificationAnalysis.CategoryCaveat(hdrMode: false, whitePointOnly: true));
+        }
+
+        [Fact]
+        public void CategoryCaveat_HdrWhitePointOnly_ExplainsPanelColorIsUncorrected()
+        {
+            string? note = VerificationAnalysis.CategoryCaveat(hdrMode: true, whitePointOnly: true);
+
+            Assert.NotNull(note);
+            Assert.Contains("white-point-only", note);
+            Assert.Contains("saturation", note, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("memory color", note, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("—", note); // no em dashes in UI text
+        }
+
+        [Fact]
+        public void CategoryCaveat_HdrFullCorrection_HasDistinctNote()
+        {
+            string? wpOnly = VerificationAnalysis.CategoryCaveat(hdrMode: true, whitePointOnly: true);
+            string? full = VerificationAnalysis.CategoryCaveat(hdrMode: true, whitePointOnly: false);
+
+            Assert.NotNull(full);
+            Assert.NotEqual(wpOnly, full);
+            Assert.Contains("SDR-to-HDR", full);
+            Assert.DoesNotContain("white-point-only", full);
+            Assert.DoesNotContain("—", full); // no em dashes in UI text
+        }
+
+        [Fact]
         public void ComputeMetrics_PopulatesPerPatchResults_InMeasurementOrder()
         {
             var target = StandardTargets.SrgbGamma22;

@@ -85,6 +85,10 @@ namespace HDRGammaController.Core.Calibration
 
             // Expected color for each patch: the same content curve the grading uses (sRGB
             // for PQ targets / HDR mode, where SDR patches ride the sRGB curve at SDR white).
+            // NOTE: CalibrationVerifier.ComputeMetrics is the authoritative grader - it
+            // re-derives the expectation from DisplayRgb with the PQ-target rule. The two
+            // rules agree in every reachable combination because target selection enforces
+            // hdrMode <=> PQ target (HDR-only/SDR-only targets in the setup window).
             bool srgbContent = hdrMode || target.TransferFunction == TransferFunctionType.Pq;
             double Linearize(double s) => srgbContent ? ColorMath.SrgbEotf(s) : target.ApplyEotf(s);
 
@@ -212,6 +216,32 @@ namespace HDRGammaController.Core.Calibration
                 SaturationDeltaE = Avg(saturation),
                 MemoryColorsDeltaE = Avg(memory),
             };
+        }
+
+        /// <summary>
+        /// Optional caveat line shown under the category breakdown so the saturation and
+        /// memory-color averages are not misread. In HDR mode those patches are SDR content
+        /// measured through the Windows SDR-to-HDR mapping and the panel's own HDR color
+        /// processing; the installed correction is built from neutral (gray-ladder) and
+        /// primary measurements - and in white-point-only mode it deliberately leaves the
+        /// panel's color rendering untouched - so elevated values in those categories
+        /// describe the panel's HDR color handling, not the grayscale/white point
+        /// calibration. Returns null when no caveat applies (SDR sweeps).
+        /// </summary>
+        public static string? CategoryCaveat(bool hdrMode, bool whitePointOnly)
+        {
+            if (!hdrMode) return null;
+            return whitePointOnly
+                ? "Note: saturation and memory color patches travel the Windows SDR-to-HDR " +
+                  "pipeline and the panel's own HDR color processing. This white-point-only " +
+                  "calibration corrects gray tone and white point and intentionally leaves " +
+                  "color rendering to the panel, so those categories show the panel's native " +
+                  "HDR color accuracy rather than a calibration error."
+                : "Note: saturation and memory color patches travel the Windows SDR-to-HDR " +
+                  "pipeline and the panel's HDR color processing. The correction is built " +
+                  "from neutral and primary measurements, so elevated values in those " +
+                  "categories largely reflect the panel's HDR rendering of mixed colors " +
+                  "rather than the grayscale or white point calibration.";
         }
     }
 }

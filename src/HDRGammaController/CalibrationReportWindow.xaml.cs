@@ -698,7 +698,7 @@ namespace HDRGammaController
                         detailedFigures,
                         VerificationAnalysis.WorstPatches(detailedResults),
                         VerificationAnalysis.BestPatches(detailedResults),
-                        VerificationAnalysis.ComputeCategoryBreakdown(detailedResults).ToDisplayText());
+                        BuildCategoryBreakdownText(detailedResults));
                 }
 
                 var document = ReportPrintBuilder.Build(Vm, _isHistorical, charts, detailedSection);
@@ -970,8 +970,7 @@ namespace HDRGammaController
             Fill(Vm.WorstPatches, VerificationAnalysis.WorstPatches(results));
             Fill(Vm.BestPatches, VerificationAnalysis.BestPatches(results));
 
-            Vm.CategoryBreakdownText =
-                VerificationAnalysis.ComputeCategoryBreakdown(results).ToDisplayText();
+            Vm.CategoryBreakdownText = BuildCategoryBreakdownText(results);
             Vm.HasDetailedResults = true;
 
             // The card just became visible (BoolToVis), so its canvases have not been laid
@@ -981,6 +980,26 @@ namespace HDRGammaController
             Dispatcher.BeginInvoke(
                 System.Windows.Threading.DispatcherPriority.Loaded,
                 new Action(RenderDetailedCharts));
+        }
+
+        /// <summary>
+        /// Category breakdown line plus, for HDR sweeps, the honesty caveat: saturation and
+        /// memory color patches measure the Windows SDR-to-HDR pipeline and the panel's HDR
+        /// color handling, which the (typically white-point-only) correction does not remap.
+        /// Without the note those two averages read as calibration failure on wide-gamut HDR
+        /// panels. The target carries everything needed (PQ <=> HDR sweep, WhitePointOnly),
+        /// so live and restored reports annotate identically.
+        /// </summary>
+        private string BuildCategoryBreakdownText(IReadOnlyList<PatchDeltaE> results)
+        {
+            string text = VerificationAnalysis.ComputeCategoryBreakdown(results).ToDisplayText();
+            var target = _applyContext?.Target ?? _profile?.Target;
+            if (target != null &&
+                VerificationAnalysis.CategoryCaveat(target.IsHdr, target.WhitePointOnly) is { } caveat)
+            {
+                text += "\n" + caveat;
+            }
+            return text;
         }
 
         /// <summary>Draws the on-screen detailed charts with the dark report theme.</summary>
