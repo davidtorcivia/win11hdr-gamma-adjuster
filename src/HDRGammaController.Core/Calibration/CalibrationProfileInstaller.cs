@@ -110,12 +110,14 @@ namespace HDRGammaController.Core.Calibration
             //  HDR: PQ wire-signal domain LUTs built from the HDR measurements.
             double[] toneR = lutR, toneG = lutG, toneB = lutB;
             double? headerMinNits = null, headerMaxNits = null;
+            bool wireExactLuts = false;
             if (hdrMode)
             {
                 HdrMhc2LutBuilder.Result hdrLuts;
                 try { hdrLuts = HdrMhc2LutBuilder.Build(measurements!, monitor.SdrWhiteLevel); }
                 catch (Exception ex) { return new InstallResult(false, "", $"HDR LUT generation failed: {ex.Message}"); }
                 (toneR, toneG, toneB) = (hdrLuts.LutR, hdrLuts.LutG, hdrLuts.LutB);
+                wireExactLuts = hdrLuts.WireExact;
 
                 // MHC2 header range: the panel's DXGI-reported HDR range when available
                 // (matches what the Windows HDR Calibration app writes), else measured.
@@ -139,7 +141,8 @@ namespace HDRGammaController.Core.Calibration
                 $"  uniform scale {uniformScale:F4} (max target drive {maxDrive:F3})\n" +
                 $"  MHC2 tag matrix (XYZ-domain wrapped): {FormatMatrix(mhc2Matrix)}\n" +
                 $"  mode {(hdrMode ? "HDR (PQ-domain LUTs)" : "SDR")}{(target.WhitePointOnly ? ", WHITE-POINT-ONLY matrix" : "")}" +
-                (hdrMode ? $", header range {headerMinNits:F3}–{headerMaxNits:F0} nits, SDR white {monitor.SdrWhiteLevel:F0} nits" : ""));
+                (hdrMode ? $", header range {headerMinNits:F3}–{headerMaxNits:F0} nits, SDR white {monitor.SdrWhiteLevel:F0} nits" +
+                           $", LUT source {(wireExactLuts ? "WIRE-EXACT FP16 ladder" : "SDR-mapped grayscale fallback")}" : ""));
 
             // Override names support the live white-trim preview: it alternates between two
             // fixed names so each step forces the compositor to load fresh content instead

@@ -13,18 +13,20 @@ namespace HDRGammaController.Core.Calibration
     /// (scaled per channel by the white-point gains that move the panel's native white to
     /// the target white).
     ///
-    /// The characterization patches are SDR content, which Windows maps onto the wire as
-    /// PQ(sdrWhiteNits · srgbEotf(v)) — so the measurements only cover the wire range up to
-    /// the SDR white level. Within that range the LUT inverts the MEASURED response; above
-    /// it we have no data, so the LUT continues analytically (pure PQ re-encode of the
-    /// desired nits), leaving the panel's own highlight rolloff untouched. A smoothstep
-    /// blends the two regimes to avoid a visible seam.
+    /// Two measurement sources, by preference:
+    ///  - HDR wire-ladder patches (ColorPatch.Nits, FP16 scRGB rendering): wire positions
+    ///    are exact and span the full desktop+HDR range, so the LUT inverts MEASURED
+    ///    response everywhere up to the panel's reachable peak, going identity only above.
+    ///  - SDR-window grayscale fallback: Windows maps SDR content onto the wire as
+    ///    PQ(sdrWhiteNits · srgbEotf(v)) — an assumption, and coverage stops at SDR white,
+    ///    so correction is knee-safe-limited and blends to identity inside the SDR range.
     /// </summary>
     public static class HdrMhc2LutBuilder
     {
         public sealed record Result(
             double[] LutR, double[] LutG, double[] LutB,
-            double MeasuredBlackNits, double MeasuredPeakNits);
+            double MeasuredBlackNits, double MeasuredPeakNits,
+            bool WireExact = false);
 
         private const int LutSamples = 1024;
 
@@ -41,16 +43,32 @@ namespace HDRGammaController.Core.Calibration
                 throw new ArgumentOutOfRangeException(nameof(sdrWhiteNits),
                     $"SDR white level {sdrWhiteNits:F0} nits is implausible.");
 
-            // Wire-PQ position and measured nits for each grayscale patch. The patch signal v
-            // is SDR content; Windows linearizes it with the piecewise sRGB EOTF and scales to
-            // the SDR white level before PQ-encoding for the wire.
+            // PREFERRED: HDR wire-ladder patches (ColorPatch.Nits set) rendered through the
+            // FP16 scRGB path. Their wire position is EXACT - PQ⁻¹(requested nits) - with no
+            // SDR-mapping assumption, and they reach far above SDR white, so the LUT can
+            // correct with measured data across the whole desktop+HDR range. (Validated on
+            // the MAG 271QPX: probe confirmed FP16 wire positions are exact while the OS
+            // SDR-white value was ~7% off.)
             var points = measurements
-                .Where(m => m.IsValid && m.Patch.Category == PatchCategory.Grayscale)
+                .Where(m => m.IsValid && m.Patch.Nits is not null)
                 .Select(m => (
-                    P: TransferFunctions.PqInverseEotf(sdrWhiteNits * TransferFunctions.SrgbEotf(m.Patch.DisplayRgb.R)),
+                    P: TransferFunctions.PqInverseEotf(Math.Max(m.Patch.Nits!.Value, 0)),
                     Nits: m.Xyz.Y))
                 .OrderBy(t => t.P)
                 .ToList();
+            bool wireExact = points.Count >= 5;
+
+            // FALLBACK: SDR-window grayscale patches. Windows maps SDR content onto the wire
+            // as PQ(sdrWhiteNits · srgbEotf(v)) - an ASSUMPTION (the OS-reported white level
+            // can be off), and coverage stops at SDR white.
+            if (!wireExact)
+                points = measurements
+                    .Where(m => m.IsValid && m.Patch.Category == PatchCategory.Grayscale)
+                    .Select(m => (
+                        P: TransferFunctions.PqInverseEotf(sdrWhiteNits * TransferFunctions.SrgbEotf(m.Patch.DisplayRgb.R)),
+                        Nits: m.Xyz.Y))
+                    .OrderBy(t => t.P)
+                    .ToList();
 
             if (points.Count < 5)
                 throw new InvalidOperationException(
@@ -68,18 +86,32 @@ namespace HDRGammaController.Core.Calibration
                     $"Measured HDR grayscale has almost no range ({blackNits:F2}–{peakNits:F2} nits) - readings look invalid.");
 
             var lut = new double[LutSamples];
-            // Correct fully only in the lower half of the measured range; fade to IDENTITY
-            // between 50% and 80% of it. Two hard-won reasons (verified on the M27Q):
-            //  1. The upper range sits inside the panel's HDR tone-mapping knee, where the
-            //     wire-axis model breaks down - "correcting" the knee overshoots and just
-            //     dims highlights (verified white came in at 189 nits instead of ~220).
-            //  2. The LUT is applied per channel AFTER the gamut matrix. Strong curvature
-            //     near the top distorts the channel ratios of unequal drive values — which
-            //     is exactly the matrix's D65-corrected white (it measured x=0.301, blue-
-            //     green, with the aggressive top-end correction). Identity near the top
-            //     keeps the white point the matrix worked for.
-            double blendStartNits = blackNits + (peakNits - blackNits) * 0.50;
-            double blendEndNits = blackNits + (peakNits - blackNits) * 0.80;
+            double blendStartNits, blendEndNits;
+            if (wireExact)
+            {
+                // Wire positions are measured, not assumed, so the inversion is valid across
+                // the entire measured span - including the panel's tone-mapping knee, which
+                // is now just part of the measured response. Identity only ABOVE the top
+                // measured point: beyond the panel's reachable output the LUT must leave the
+                // panel's own rolloff alone (it cannot create luminance that isn't there).
+                blendStartNits = peakNits * 0.90;
+                blendEndNits = peakNits;
+            }
+            else
+            {
+                // Correct fully only in the lower half of the measured range; fade to IDENTITY
+                // between 50% and 80% of it. Two hard-won reasons (verified on the M27Q):
+                //  1. The upper range sits inside the panel's HDR tone-mapping knee, where the
+                //     ASSUMED wire-axis model breaks down - "correcting" the knee overshoots
+                //     and just dims highlights (verified white 189 nits instead of ~220).
+                //  2. The LUT is applied per channel AFTER the gamut matrix. Strong curvature
+                //     near the top distorts the channel ratios of unequal drive values — which
+                //     is exactly the matrix's D65-corrected white (it measured x=0.301, blue-
+                //     green, with the aggressive top-end correction). Identity near the top
+                //     keeps the white point the matrix worked for.
+                blendStartNits = blackNits + (peakNits - blackNits) * 0.50;
+                blendEndNits = blackNits + (peakNits - blackNits) * 0.80;
+            }
 
             for (int i = 0; i < LutSamples; i++)
             {
@@ -116,7 +148,7 @@ namespace HDRGammaController.Core.Calibration
             for (int i = 1; i < LutSamples; i++)
                 if (lut[i] < lut[i - 1]) lut[i] = lut[i - 1];
 
-            return new Result(lut, (double[])lut.Clone(), (double[])lut.Clone(), blackNits, peakNits);
+            return new Result(lut, (double[])lut.Clone(), (double[])lut.Clone(), blackNits, peakNits, wireExact);
         }
 
         /// <summary>The wire PQ signal that produced <paramref name="nits"/> on the measured panel.</summary>

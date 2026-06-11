@@ -139,6 +139,16 @@ namespace HDRGammaController.Core.Calibration
         public CieLab? TargetLab { get; init; }
 
         /// <summary>
+        /// When set, this is an HDR WIRE patch: the display layer must emit this absolute
+        /// luminance (equal on all channels) through an FP16 scRGB surface (scRGB value =
+        /// nits/80), which places the stimulus at the exact PQ wire position PQ⁻¹(nits)
+        /// with no SDR-mapping assumption. DisplayRgb is ignored for rendering; keep it at
+        /// midpoint (0.5) so the white/black classification heuristics elsewhere never
+        /// mistake wire patches for the SDR white or black patch.
+        /// </summary>
+        public double? Nits { get; init; }
+
+        /// <summary>
         /// Category of this patch for analysis grouping.
         /// </summary>
         public PatchCategory Category { get; init; } = PatchCategory.General;

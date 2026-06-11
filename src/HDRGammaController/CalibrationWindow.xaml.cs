@@ -82,6 +82,10 @@ namespace HDRGammaController
 
         private bool _isFullScreenMode = true;
         private int _patchSize = 600;
+        // FP16 scRGB renderer for HDR wire-ladder patches (ColorPatch.Nits). Created lazily
+        // over the WPF patch area when the first wire patch displays; disposed when a normal
+        // patch follows or the run ends.
+        private HdrPatchRenderer? _hdrWireRenderer;
         private bool _isPaused;
         private bool _isCancelled;
         private bool _isCalibrationRunning;
@@ -223,6 +227,8 @@ namespace HDRGammaController
                 _isCancelled = true;
                 _cancellationTokenSource?.Cancel();
             }
+
+            DisposeHdrWireRenderer();
 
             // Always restore the GPU gamma ramp on close when we entered bypass — including
             // after a SUCCESSFUL calibration. The closed loop leaves its (possibly aggressive)
@@ -704,6 +710,16 @@ namespace HDRGammaController
                 };
             }
 
+            // HDR wire ladder: FP16 patches at exact PQ wire positions, far above SDR white.
+            // HdrMhc2LutBuilder prefers these for the PQ tone LUTs (no SDR-mapping
+            // assumption - probe-validated on the MAG 271QPX June 2026).
+            if (hdrMode && _targetMonitor != null)
+            {
+                _orchestrator.AdditionalPatches = HdrWirePatchSet.Build(_targetMonitor.HdrPeakNits);
+                Log.Info($"CalibrationWindow: appended {_orchestrator.AdditionalPatches.Count} HDR wire-ladder patches " +
+                         $"(panel peak {_targetMonitor.HdrPeakNits:F0} nits).");
+            }
+
             // Start calibration
             _isCalibrationRunning = true;
             _isPaused = false;
@@ -717,7 +733,14 @@ namespace HDRGammaController
             UpdateProgress();
 
             // Run calibration via orchestrator
-            await RunCalibrationAsync(_cancellationTokenSource.Token);
+            try
+            {
+                await RunCalibrationAsync(_cancellationTokenSource.Token);
+            }
+            finally
+            {
+                DisposeHdrWireRenderer();
+            }
         }
 
         private async Task RunCalibrationAsync(CancellationToken cancellationToken)
@@ -1283,11 +1306,51 @@ namespace HDRGammaController
 
         private void DisplayPatch(ColorPatch patch)
         {
+            if (patch.Nits is double nits)
+            {
+                // HDR wire patch: emit through the FP16 scRGB renderer placed exactly over
+                // the WPF patch area (PointToScreen = physical pixels, so DPI-safe). The
+                // WPF patch underneath goes black so any sliver around the renderer window
+                // doesn't contaminate the surround.
+                ColorPatchBorder.Background = System.Windows.Media.Brushes.Black;
+                try
+                {
+                    if (_hdrWireRenderer == null)
+                    {
+                        var topLeft = ColorPatchBorder.PointToScreen(new Point(0, 0));
+                        var bottomRight = ColorPatchBorder.PointToScreen(
+                            new Point(ColorPatchBorder.ActualWidth, ColorPatchBorder.ActualHeight));
+                        _hdrWireRenderer = new HdrPatchRenderer(
+                            (int)Math.Round(topLeft.X), (int)Math.Round(topLeft.Y),
+                            (int)Math.Round(bottomRight.X - topLeft.X), (int)Math.Round(bottomRight.Y - topLeft.Y));
+                        Log.Info($"CalibrationWindow: HDR wire renderer created at " +
+                                 $"({topLeft.X:F0},{topLeft.Y:F0}) {bottomRight.X - topLeft.X:F0}x{bottomRight.Y - topLeft.Y:F0}.");
+                    }
+                    _hdrWireRenderer.PresentNits(nits, nits, nits);
+                }
+                catch (Exception ex)
+                {
+                    // The measurement will read whatever is on screen (black) and the
+                    // builder will fall back to the SDR-mapped path - degraded, not fatal.
+                    Log.Info($"CalibrationWindow: HDR wire renderer failed ({ex.Message}); wire patch shows black.");
+                }
+                return;
+            }
+
+            DisposeHdrWireRenderer();
+
             // Convert patch RGB to WPF color
             byte r = (byte)(Math.Clamp(patch.DisplayRgb.R, 0, 1) * 255);
             byte g = (byte)(Math.Clamp(patch.DisplayRgb.G, 0, 1) * 255);
             byte b = (byte)(Math.Clamp(patch.DisplayRgb.B, 0, 1) * 255);
             ColorPatchBorder.Background = new SolidColorBrush(Color.FromRgb(r, g, b));
+        }
+
+        private void DisposeHdrWireRenderer()
+        {
+            if (_hdrWireRenderer == null) return;
+            try { _hdrWireRenderer.Dispose(); } catch { }
+            _hdrWireRenderer = null;
         }
 
         private void UpdateProgress()

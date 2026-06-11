@@ -51,6 +51,13 @@ namespace HDRGammaController.Core.Calibration
         /// </summary>
         public ClosedLoopConfig? ClosedLoop { get; set; }
 
+        /// <summary>
+        /// Extra patches appended after the generated set - used for the HDR wire ladder
+        /// (ColorPatch.Nits patches the display layer renders via FP16 scRGB). Set before
+        /// StartCalibrationAsync.
+        /// </summary>
+        public IReadOnlyList<ColorPatch>? AdditionalPatches { get; set; }
+
         #endregion
 
         #region Events
@@ -216,7 +223,18 @@ namespace HDRGammaController.Core.Calibration
             {
                 // Initialize
                 SetState(CalibrationState.Initializing);
-                _patches = PatchSetGenerator.GeneratePatchSet(_target, _preset);
+                var generated = PatchSetGenerator.GeneratePatchSet(_target, _preset);
+                if (AdditionalPatches is { Count: > 0 })
+                {
+                    var combined = new List<ColorPatch>(generated.Count + AdditionalPatches.Count);
+                    combined.AddRange(generated);
+                    combined.AddRange(AdditionalPatches);
+                    _patches = combined;
+                }
+                else
+                {
+                    _patches = generated;
+                }
                 _measurements = new List<MeasurementResult>(_patches.Count);
                 _currentPatchIndex = 0;
                 _elapsedTimer.Restart();

@@ -133,5 +133,98 @@ namespace HDRGammaController.Tests
             Assert.Throws<InvalidOperationException>(() =>
                 HdrMhc2LutBuilder.Build(measurements, SdrWhite));
         }
+
+        // ---- HDR wire-ladder (FP16 exact wire positions) ------------------------------
+
+        private static readonly double[] Ladder = { 0, 2, 4, 8, 16, 32, 64, 100, 150, 220, 320, 450, 650, 1000 };
+
+        /// <summary>Wire-ladder measurements: requested nits sets the exact wire position.</summary>
+        private static List<MeasurementResult> SimulateWireLadder(Func<double, double> panelNitsOfPq)
+        {
+            return Ladder.Select((n, i) =>
+            {
+                double nits = panelNitsOfPq(TransferFunctions.PqInverseEotf(n));
+                return new MeasurementResult
+                {
+                    Patch = new ColorPatch
+                    {
+                        Name = $"HDR wire {n:F0} nits",
+                        DisplayRgb = new LinearRgb(0.5, 0.5, 0.5),
+                        Nits = n,
+                        Category = PatchCategory.General,
+                        Index = i,
+                    },
+                    Xyz = new CieXyz(nits * 0.95, nits, nits * 1.08),
+                };
+            }).ToList();
+        }
+
+        [Fact]
+        public void WireLadder_FlatGainPanel_IsInvertedAcrossFullRange()
+        {
+            // The June 2026 probe result on the MAG 271QPX: panel outputs a uniform 86.7%
+            // of the PQ spec from 56 to 446 nits. With wire-exact data the LUT must drive
+            // the wire higher so output lands on spec - across the WHOLE measured range,
+            // not just below the old SDR-range knee.
+            const double gain = 0.867;
+            var measurements = SimulateWireLadder(p => Math.Max(TransferFunctions.PqEotf(p) * gain, 0.02));
+            var result = HdrMhc2LutBuilder.Build(measurements, SdrWhite);
+
+            Assert.True(result.WireExact);
+            Assert.True(Math.Abs(result.MeasuredPeakNits - 867.0) < 1.0);
+
+            foreach (double desired in new[] { 10.0, 50.0, 100.0, 200.0, 400.0, 600.0 })
+            {
+                double p = TransferFunctions.PqInverseEotf(desired);
+                int i = (int)Math.Round(p * 1023);
+                double expected = TransferFunctions.PqInverseEotf(desired / gain);
+                Assert.True(Math.Abs(result.LutR[i] - expected) < 0.015,
+                    $"at {desired:F0} nits expected wire {expected:F3}, got {result.LutR[i]:F3}");
+            }
+        }
+
+        [Fact]
+        public void WireLadder_AboveReachablePeak_IsIdentity()
+        {
+            const double gain = 0.867;
+            var measurements = SimulateWireLadder(p => Math.Max(TransferFunctions.PqEotf(p) * gain, 0.02));
+            var result = HdrMhc2LutBuilder.Build(measurements, SdrWhite);
+
+            // The panel tops out at 867 nits: the LUT cannot create luminance the panel
+            // doesn't have, so above the reachable peak it must pass the wire through and
+            // leave the panel's own rolloff alone.
+            for (int i = 0; i < 1024; i++)
+            {
+                double p = i / 1023.0;
+                if (TransferFunctions.PqEotf(p) < result.MeasuredPeakNits * 1.05) continue;
+                Assert.True(Math.Abs(result.LutR[i] - p) < 0.002,
+                    $"identity expected above reachable peak at p={p:F3}, got {result.LutR[i]:F3}");
+            }
+        }
+
+        [Fact]
+        public void WireLadder_IsPreferredOverSdrMappedGrayscale()
+        {
+            // Grayscale says the panel is perfect; the wire ladder says it is 13% dim. The
+            // builder must trust the wire ladder (exact positions, no mapping assumption):
+            // a boosting LUT proves it did.
+            const double gain = 0.867;
+            var measurements = SimulatePanel(p => Math.Max(TransferFunctions.PqEotf(p), 0.05));
+            measurements.AddRange(SimulateWireLadder(p => Math.Max(TransferFunctions.PqEotf(p) * gain, 0.02)));
+            var result = HdrMhc2LutBuilder.Build(measurements, SdrWhite);
+
+            Assert.True(result.WireExact);
+            int idx = (int)Math.Round(TransferFunctions.PqInverseEotf(100.0) * 1023);
+            Assert.True(result.LutR[idx] > TransferFunctions.PqInverseEotf(100.0) + 0.005,
+                "LUT should boost (wire ladder data), not stay identity (grayscale data)");
+        }
+
+        [Fact]
+        public void NoWirePatches_FallsBackToSdrMappedGrayscale()
+        {
+            var measurements = SimulatePanel(p => Math.Max(TransferFunctions.PqEotf(p), 0.05));
+            var result = HdrMhc2LutBuilder.Build(measurements, SdrWhite);
+            Assert.False(result.WireExact);
+        }
     }
 }

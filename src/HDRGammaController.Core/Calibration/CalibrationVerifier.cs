@@ -58,7 +58,11 @@ namespace HDRGammaController.Core.Calibration
             var metrics = new CalibrationMetrics();
             var deltaEs = new List<double>();
 
-            var valid = measurements.Where(m => m.IsValid).ToList();
+            // HDR wire-ladder patches (Patch.Nits) characterize the PQ pipeline for the LUT
+            // builder; they are not accuracy patches. Including them would both add garbage
+            // ΔEs (DisplayRgb is a placeholder) and blow up peakY normalization (the ladder
+            // reaches far above SDR white), wrecking every number in the report.
+            var valid = measurements.Where(m => m.IsValid && m.Patch.Nits is null).ToList();
             double peakY = valid.Count > 0 ? valid.Max(m => m.Xyz.Y) : 1.0;
             if (peakY <= 0) peakY = 1.0;
 
