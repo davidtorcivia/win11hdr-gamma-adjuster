@@ -31,7 +31,19 @@ namespace HDRGammaController.Services
         public static int ExtractIcmProfiles()
         {
             var assembly = Assembly.GetExecutingAssembly();
+            // Prefer the app directory, but it is read-only for an unelevated process under
+            // Program Files - fall back to LocalAppData, which the profile installer also
+            // searches. Without the fallback a wiped app dir (e.g. a mirroring deploy)
+            // leaves NO templates anywhere and calibration apply fails.
             var appDir = AppDomain.CurrentDomain.BaseDirectory;
+            if (!IsWritable(appDir))
+            {
+                appDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "HDRGammaController");
+                Directory.CreateDirectory(appDir);
+                Log.Info($"ResourceExtractor: app dir not writable; extracting to {appDir}");
+            }
             int extractedCount = 0;
 
             foreach (var fileName in IcmProfiles)
@@ -100,6 +112,21 @@ namespace HDRGammaController.Services
                 rn.EndsWith("." + fileName, StringComparison.OrdinalIgnoreCase) ||
                 rn.EndsWith("." + fileName.Replace(".icm", "_icm"), StringComparison.OrdinalIgnoreCase) ||
                 rn.Equals(fileName, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static bool IsWritable(string dir)
+        {
+            try
+            {
+                string probe = Path.Combine(dir, $".write_probe_{Guid.NewGuid():N}");
+                File.WriteAllBytes(probe, Array.Empty<byte>());
+                File.Delete(probe);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static byte[] ReadAllBytes(Stream stream)

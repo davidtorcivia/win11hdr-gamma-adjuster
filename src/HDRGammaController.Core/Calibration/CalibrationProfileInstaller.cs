@@ -388,6 +388,12 @@ namespace HDRGammaController.Core.Calibration
             var dir = new DirectoryInfo(AppContext.BaseDirectory);
             for (int i = 0; i < 8 && dir != null; i++, dir = dir.Parent)
                 yield return dir.FullName;
+
+            // ResourceExtractor's fallback when the app dir is read-only (unelevated under
+            // Program Files): %LocalAppData%\HDRGammaController.
+            yield return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "HDRGammaController");
         }
 
         /// <summary>

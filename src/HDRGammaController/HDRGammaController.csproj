@@ -32,6 +32,19 @@
     <EmbeddedResource Include="..\..\srgb_to_gamma2p2_unspecified.icm" Link="Resources\srgb_to_gamma2p2_unspecified.icm" />
   </ItemGroup>
 
+  <!-- Also ship the templates in the build/publish output. Runtime extraction cannot
+       write to Program Files (unelevated), and a mirroring deploy (robocopy /MIR)
+       deletes anything not in the publish folder - which silently removed previously
+       extracted templates and broke calibration apply ("No MHC2 template found"). -->
+  <ItemGroup>
+    <None Include="..\..\srgb_to_gamma2p2_100_mhc2.icm" Link="srgb_to_gamma2p2_100_mhc2.icm" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\srgb_to_gamma2p2_200_mhc2.icm" Link="srgb_to_gamma2p2_200_mhc2.icm" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\srgb_to_gamma2p2_300_mhc2.icm" Link="srgb_to_gamma2p2_300_mhc2.icm" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\srgb_to_gamma2p2_400_mhc2.icm" Link="srgb_to_gamma2p2_400_mhc2.icm" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\srgb_to_gamma2p2_sdr.icm" Link="srgb_to_gamma2p2_sdr.icm" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\srgb_to_gamma2p2_unspecified.icm" Link="srgb_to_gamma2p2_unspecified.icm" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\HDRGammaController.Core\HDRGammaController.Core.csproj" />
     <ProjectReference Include="..\HDRGammaController.Interop\HDRGammaController.Interop.csproj" />
