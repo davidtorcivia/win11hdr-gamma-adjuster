@@ -52,8 +52,15 @@ namespace HDRGammaController
                 return dialog.DownloadSucceeded;
             };
             DataContext = _viewModel;
+            ThemeToggleButton.Content = BrutalistTheme.IsDark ? "◐" : "◑";
 
             Loaded += async (s, e) => await _viewModel.OnLoadedAsync();
+        }
+
+        private void ThemeToggle_Click(object sender, RoutedEventArgs e)
+        {
+            BrutalistTheme.Toggle();
+            ThemeToggleButton.Content = BrutalistTheme.IsDark ? "◐" : "◑";
         }
 
         private void FindCorrection_Click(object sender, RoutedEventArgs e)

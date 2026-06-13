@@ -28,6 +28,12 @@
     <Resource Include="app.ico" />
   </ItemGroup>
 
+  <!-- Bundled brand fonts (OFL). Referenced via pack URI by typographic family name;
+       all weights aggregate under "Plus Jakarta Sans" / "Space Grotesk". -->
+  <ItemGroup>
+    <Resource Include="Fonts\*.ttf" />
+  </ItemGroup>
+
   <!-- Embedded ICM profiles - extracted at runtime if missing or updated -->
   <ItemGroup>
     <EmbeddedResource Include="..\..\srgb_to_gamma2p2_100_mhc2.icm" Link="Resources\srgb_to_gamma2p2_100_mhc2.icm" />

@@ -37,7 +37,24 @@ namespace HDRGammaController
             DataContext = Vm;
             Vm.SettingsEdited += NotifyChange;
             Vm.PointEdited += OnPointEdited;
+
+            // The graph is drawn imperatively, so it samples token colors once per draw.
+            // Repaint when the app-wide brutalist palette flips.
+            BrutalistTheme.Changed += OnThemeChanged;
+            Unloaded += (_, _) => BrutalistTheme.Changed -= OnThemeChanged;
         }
+
+        private void OnThemeChanged()
+        {
+            // Clear so DrawCurve rebuilds nodes/now-line with fresh themed brushes
+            // (positions are reused across normal redraws; only theme flips need a rebuild).
+            CurveCanvas.Children.Clear();
+            DrawGrid();
+            if (_settings != null) DrawCurve();
+        }
+
+        private static SolidColorBrush ThemeBrush(string key, double opacity = 1.0)
+            => new SolidColorBrush(BrutalistTheme.Color(key)) { Opacity = opacity };
 
         public void Initialize(NightModeSettings settings)
         {
@@ -135,11 +152,10 @@ namespace HDRGammaController
             double w = GridCanvas.ActualWidth;
             double h = GridCanvas.ActualHeight;
 
-            // Draw Grid
-            var gridBrush = new SolidColorBrush(Color.FromRgb(60, 60, 60));
-            // ... (rest of grid drawing logic targeting GridCanvas)
-            var midBrush = new SolidColorBrush(Color.FromRgb(100, 100, 100)); // Lighter/Grey for midnight
-            var textBrush = new SolidColorBrush(Color.FromRgb(150, 150, 150));
+            // Draw Grid (themed: minor lines dim, midnight line emphasized, labels dim)
+            var gridBrush = ThemeBrush("ThemeTextDim", 0.30);
+            var midBrush = ThemeBrush("ThemeText", 0.45); // Emphasized midnight divider
+            var textBrush = ThemeBrush("ThemeTextDim");
 
             // Draw Vertical Time Lines (every 4 hours starting from GraphStartHour?)
             // We want to cover 24 hours. 0 to 24 relative to Start.
@@ -207,11 +223,13 @@ namespace HDRGammaController
                 CurveCanvas.Children.Clear(); // Safety
                 poly = new Polyline
                 {
-                    Stroke = new SolidColorBrush(Color.FromRgb(255, 180, 0)),
+                    Stroke = ThemeBrush("ThemeAccent"),
                     StrokeThickness = 2
                 };
                 CurveCanvas.Children.Add(poly);
             }
+            // Refresh each draw so a live theme flip recolors the reused polyline.
+            poly.Stroke = ThemeBrush("ThemeAccent");
 
             var points = new PointCollection();
 
@@ -287,7 +305,8 @@ namespace HDRGammaController
                  {
                      var el = new Ellipse
                      {
-                         Width = 10, Height = 10, Fill = Brushes.White, Stroke = Brushes.Black, StrokeThickness = 1,
+                         Width = 10, Height = 10,
+                         Fill = ThemeBrush("ThemeBg"), Stroke = ThemeBrush("ThemeBorder"), StrokeThickness = 2,
                          Tag = r.Point // Store model
                      };
                      el.MouseLeftButtonDown += Node_MouseDown;
@@ -296,7 +315,7 @@ namespace HDRGammaController
                  }
 
                  // Now Line
-                 var nowLine = new Line { Stroke = Brushes.Red, StrokeThickness = 1, Opacity = 0.5 };
+                 var nowLine = new Line { Stroke = ThemeBrush("ThemeAccent"), StrokeThickness = 1, Opacity = 0.5 };
                  CurveCanvas.Children.Add(nowLine);
             }
 
@@ -601,10 +620,10 @@ namespace HDRGammaController
 
             var border = new Border
             {
-                Background = new SolidColorBrush(Color.FromRgb(0x2D, 0x2D, 0x2D)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(0x50, 0x50, 0x50)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(8)
+                Background = ThemeBrush("ThemeBg"),
+                BorderBrush = ThemeBrush("ThemeBorder"),
+                BorderThickness = new Thickness(2),
+                CornerRadius = new CornerRadius(0)
             };
 
             var mainGrid = new Grid();
@@ -615,14 +634,15 @@ namespace HDRGammaController
             // Title bar
             var titleBar = new Border
             {
-                Background = new SolidColorBrush(Color.FromRgb(0x25, 0x25, 0x25)),
-                CornerRadius = new CornerRadius(8, 8, 0, 0)
+                Background = ThemeBrush("ThemeSurface"),
+                CornerRadius = new CornerRadius(0)
             };
             var titleText = new TextBlock
             {
-                Text = "Delete Schedule Point",
-                Foreground = System.Windows.Media.Brushes.White,
-                FontWeight = FontWeights.Medium,
+                Text = "DELETE SCHEDULE POINT",
+                Foreground = ThemeBrush("ThemeText"),
+                FontFamily = (FontFamily)Application.Current.Resources["DisplayFont"],
+                FontWeight = FontWeights.Bold,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(16, 0, 0, 0)
             };
@@ -639,7 +659,8 @@ namespace HDRGammaController
             content.Children.Add(new TextBlock
             {
                 Text = $"Delete the schedule point at {displayTime} ({kelvin}K)?",
-                Foreground = System.Windows.Media.Brushes.White,
+                Foreground = ThemeBrush("ThemeText"),
+                FontFamily = (FontFamily)Application.Current.Resources["BodyFont"],
                 FontSize = 13,
                 TextWrapping = TextWrapping.Wrap
             });
@@ -657,12 +678,14 @@ namespace HDRGammaController
 
             var cancelBtn = new Button
             {
-                Content = "Cancel",
-                Width = 80,
+                Content = "CANCEL",
+                Width = 84,
                 Padding = new Thickness(0, 6, 0, 6),
                 Margin = new Thickness(0, 0, 8, 0),
-                Background = new SolidColorBrush(Color.FromRgb(0x44, 0x44, 0x44)),
-                Foreground = System.Windows.Media.Brushes.White,
+                Background = ThemeBrush("ThemeSurface"),
+                Foreground = ThemeBrush("ThemeText"),
+                FontFamily = (FontFamily)Application.Current.Resources["DisplayFont"],
+                FontWeight = FontWeights.Bold,
                 BorderThickness = new Thickness(0),
                 Cursor = Cursors.Hand
             };
@@ -670,11 +693,13 @@ namespace HDRGammaController
 
             var deleteBtn = new Button
             {
-                Content = "Delete",
-                Width = 80,
+                Content = "DELETE",
+                Width = 84,
                 Padding = new Thickness(0, 6, 0, 6),
-                Background = new SolidColorBrush(Color.FromRgb(0xC4, 0x2B, 0x1C)),
-                Foreground = System.Windows.Media.Brushes.White,
+                Background = ThemeBrush("ThemeAccent"),
+                Foreground = ThemeBrush("ThemeOnAccent"),
+                FontFamily = (FontFamily)Application.Current.Resources["DisplayFont"],
+                FontWeight = FontWeights.Bold,
                 BorderThickness = new Thickness(0),
                 Cursor = Cursors.Hand
             };

@@ -176,7 +176,16 @@ namespace HDRGammaController.Core
         private SettingsData _data = new SettingsData();
 
         public NightModeSettings NightMode => _data.NightMode.ToNightModeSettings();
-        
+
+        /// <summary>UI theme override: true = dark, false = light, null = follow the OS.</summary>
+        public bool? DarkTheme => _data.DarkTheme;
+
+        public void SetDarkTheme(bool dark)
+        {
+            _data.DarkTheme = dark;
+            Save();
+        }
+
         public event Action<NightModeSettings>? NightModeChanged;
         
         public void NotifyNightModeChanged(NightModeSettings? settings = null)
@@ -572,6 +581,8 @@ namespace HDRGammaController.Core
             public Dictionary<string, MonitorProfileData> MonitorProfiles { get; set; } = new Dictionary<string, MonitorProfileData>();
             public NightModeSettingsData NightMode { get; set; } = new NightModeSettingsData();
             public List<AppExclusionRule> ExcludedApps { get; set; } = new List<AppExclusionRule>();
+            // Brutalist UI theme: true = dark, false = light, null = follow OS.
+            public bool? DarkTheme { get; set; } = null;
         }
 
         private class LegacySettingsData

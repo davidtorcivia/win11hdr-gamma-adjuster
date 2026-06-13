@@ -34,7 +34,7 @@ namespace HDRGammaController
                     Content = label,
                     Padding = new Thickness(16, 7, 16, 7),
                     Margin = new Thickness(8, 0, 0, 0),
-                    Background = new SolidColorBrush(accent ? Color.FromRgb(0x00, 0x78, 0xD4) : Color.FromRgb(0x3D, 0x3D, 0x3D)),
+                    Background = new SolidColorBrush(accent ? Color.FromRgb(0xFF, 0x3C, 0x2F) : Color.FromRgb(0x3D, 0x3D, 0x3D)),
                     Foreground = Brushes.White,
                     BorderThickness = new Thickness(0),
                     MinWidth = 80,
@@ -67,35 +67,42 @@ namespace HDRGammaController
                 confirm.IsCancel = true;
             }
 
+            var display = Application.Current?.Resources["DisplayFont"] as FontFamily;
+            var body = Application.Current?.Resources["BodyFont"] as FontFamily;
+
             var stack = new StackPanel { Margin = new Thickness(24, 20, 24, 20) };
             stack.Children.Add(new TextBlock
             {
-                Text = title,
+                Text = title.ToUpperInvariant(),
+                FontFamily = display,
                 FontSize = 15,
-                FontWeight = FontWeights.SemiBold,
+                FontWeight = FontWeights.Bold,
                 Margin = new Thickness(0, 0, 0, 10),
             });
             stack.Children.Add(new TextBlock
             {
                 Text = message,
+                FontFamily = body,
+                FontSize = 13,
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = new SolidColorBrush(Color.FromRgb(0xCC, 0xCC, 0xCC)),
             });
             stack.Children.Add(buttons);
 
+            // Dark-fixed brutalist: confirmations mostly appear over the dark calibration UI.
             Content = new Border
             {
-                Background = new SolidColorBrush(Color.FromRgb(0x1E, 0x1E, 0x1E)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(0x3F, 0x3F, 0x3F)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(8),
+                Background = new SolidColorBrush(Color.FromRgb(0x14, 0x14, 0x14)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0xFF, 0xFF)),
+                BorderThickness = new Thickness(2),
+                CornerRadius = new CornerRadius(0),
                 Child = stack,
             };
 
             // Merge the shared dark styles so the buttons get the templated look.
             Resources.MergedDictionaries.Add(new ResourceDictionary
             {
-                Source = new Uri("/Themes/DarkControls.xaml", UriKind.Relative),
+                Source = new Uri("pack://application:,,,/Gloam;component/Themes/DarkControls.xaml", UriKind.Absolute),
             });
         }
 

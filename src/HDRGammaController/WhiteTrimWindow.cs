@@ -76,7 +76,7 @@ namespace HDRGammaController
                 Content = "Done — keep this white",
                 Padding = new Thickness(16, 7, 16, 7),
                 Margin = new Thickness(4, 0, 4, 0),
-                Background = new SolidColorBrush(Color.FromRgb(0x08, 0x91, 0xb2)),
+                Background = new SolidColorBrush(Color.FromRgb(0xFF, 0x3C, 0x2F)),
                 Foreground = Brushes.White,
                 BorderThickness = new Thickness(0),
             };

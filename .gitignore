@@ -26,6 +26,7 @@ build_log.txt
 .claude/
 .vscode/
 .idea/
+*.bak
 
 # Stray artifact: a `2>nul` redirect run in bash on Windows creates a literal
 # file called "nul" because bash doesn't honor Windows reserved device names.

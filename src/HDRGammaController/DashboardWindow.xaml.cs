@@ -35,6 +35,18 @@ namespace HDRGammaController
 
             // The view model subscribes to NightModeService, which outlives this window.
             Closed += (s, e) => _viewModel.Dispose();
+
+            // Reflect the current app-wide brutalist theme on the toggle glyph.
+            ThemeToggleButton.Content = BrutalistTheme.IsDark ? "◐" : "◑";
+        }
+
+        // The brutalist light/dark palette is app-wide (App.BrutalistTheme): the toggle
+        // swaps the Theme* brushes in Application.Resources, which every {DynamicResource}
+        // consumer across the app re-resolves. The half-moon glyph mirrors the site button.
+        private void ThemeToggle_Click(object sender, RoutedEventArgs e)
+        {
+            BrutalistTheme.Toggle();
+            ThemeToggleButton.Content = BrutalistTheme.IsDark ? "◐" : "◑";
         }
 
         private void OnConfigureRequested(DashboardItem item)

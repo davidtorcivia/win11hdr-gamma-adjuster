@@ -32,15 +32,16 @@ namespace HDRGammaController
             Foreground = new SolidColorBrush(Color.FromRgb(0xe0, 0xe0, 0xe0));
             Resources.MergedDictionaries.Add(new ResourceDictionary
             {
-                Source = new Uri("/Themes/DarkControls.xaml", UriKind.Relative),
+                Source = new Uri("pack://application:,,,/Gloam;component/Themes/DarkControls.xaml", UriKind.Absolute),
             });
             Services.DarkTitleBar.Apply(this);
 
             _list = new ListView
             {
-                Background = new SolidColorBrush(Color.FromRgb(0x25, 0x25, 0x25)),
+                Background = new SolidColorBrush(Color.FromRgb(0x1a, 0x1a, 0x1a)),
                 Foreground = new SolidColorBrush(Color.FromRgb(0xe0, 0xe0, 0xe0)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(0x3f, 0x3f, 0x3f)),
+                BorderBrush = Brushes.White,
+                BorderThickness = new Thickness(2),
                 Margin = new Thickness(0, 0, 0, 10),
             };
             var grid = new GridView();
@@ -59,7 +60,7 @@ namespace HDRGammaController
                     Content = label,
                     Padding = new Thickness(14, 6, 14, 6),
                     Margin = new Thickness(8, 0, 0, 0),
-                    Background = new SolidColorBrush(accent ? Color.FromRgb(0x00, 0x78, 0xD4) : Color.FromRgb(0x3d, 0x3d, 0x3d)),
+                    Background = new SolidColorBrush(accent ? Color.FromRgb(0xFF, 0x3C, 0x2F) : Color.FromRgb(0x3d, 0x3d, 0x3d)),
                     Foreground = Brushes.White,
                     BorderThickness = new Thickness(0),
                 };

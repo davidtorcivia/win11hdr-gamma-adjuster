@@ -1,32 +1,35 @@
 <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-    <!-- Shared dark implicit styles for code-built windows (CcssBrowserWindow,
-         ProfileManagerWindow). The default WPF chrome for buttons, list headers and
-         scrollbars is light regardless of the Background set on the controls. -->
+    <!-- Shared implicit styles for the code-built utility windows (ProfileManagerWindow,
+         CcssBrowserWindow, ReportHistoryWindow). These windows stay dark-fixed; styling
+         is brutalist (square, signal-red accent, hard borders, display headers). -->
 
-    <SolidColorBrush x:Key="DarkAccent" Color="#0078D4"/>
-    <SolidColorBrush x:Key="DarkCardBorder" Color="#3F3F3F"/>
+    <SolidColorBrush x:Key="DarkAccent" Color="#FF3C2F"/>
+    <SolidColorBrush x:Key="DarkCardBorder" Color="#FFFFFF"/>
 
     <Style TargetType="Button">
-        <Setter Property="Background" Value="#3D3D3D"/>
+        <Setter Property="Background" Value="Transparent"/>
         <Setter Property="Foreground" Value="White"/>
+        <Setter Property="FontFamily" Value="{DynamicResource DisplayFont}"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="FontSize" Value="12"/>
         <Setter Property="BorderThickness" Value="0"/>
-        <Setter Property="Padding" Value="14,5"/>
+        <Setter Property="Padding" Value="14,7"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
                     <Border x:Name="Bd" Background="{TemplateBinding Background}"
-                            CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            BorderBrush="#FFFFFF" BorderThickness="2" Padding="{TemplateBinding Padding}">
                         <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Bd" Property="Opacity" Value="0.85"/>
+                            <Setter TargetName="Bd" Property="Opacity" Value="0.82"/>
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
-                            <Setter TargetName="Bd" Property="Opacity" Value="0.45"/>
+                            <Setter TargetName="Bd" Property="Opacity" Value="0.40"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -35,14 +38,16 @@
     </Style>
 
     <Style TargetType="GridViewColumnHeader">
-        <Setter Property="Foreground" Value="#CCCCCC"/>
-        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Foreground" Value="#BBBBBB"/>
+        <Setter Property="FontFamily" Value="{DynamicResource DisplayFont}"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="FontSize" Value="11"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="GridViewColumnHeader">
                     <Grid>
-                        <Border x:Name="HeaderBorder" Background="#2D2D2D"
-                                BorderBrush="{StaticResource DarkCardBorder}" BorderThickness="0,0,1,1"
+                        <Border x:Name="HeaderBorder" Background="#1A1A1A"
+                                BorderBrush="{StaticResource DarkCardBorder}" BorderThickness="0,0,1,2"
                                 Padding="8,6">
                             <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center"
                                               RecognizesAccessKey="True"/>
@@ -60,7 +65,7 @@
                     </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="HeaderBorder" Property="Background" Value="#383838"/>
+                            <Setter TargetName="HeaderBorder" Property="Background" Value="#2A2A2A"/>
                         </Trigger>
                         <Trigger Property="Role" Value="Padding">
                             <Setter TargetName="PART_HeaderGripper" Property="Visibility" Value="Collapsed"/>
@@ -77,13 +82,13 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="ListViewItem">
-                    <Border x:Name="Bd" Background="Transparent" Padding="2,5">
+                    <Border x:Name="Bd" Background="Transparent" Padding="2,6">
                         <GridViewRowPresenter Content="{TemplateBinding Content}"
                                               Columns="{TemplateBinding GridView.ColumnCollection}"/>
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Bd" Property="Background" Value="#333333"/>
+                            <Setter TargetName="Bd" Property="Background" Value="#2A2A2A"/>
                         </Trigger>
                         <Trigger Property="IsSelected" Value="True">
                             <Setter TargetName="Bd" Property="Background" Value="{StaticResource DarkAccent}"/>
@@ -102,13 +107,13 @@
             <Setter.Value>
                 <ControlTemplate TargetType="ScrollBar">
                     <Grid>
-                        <Border Background="#252525" CornerRadius="5"/>
+                        <Border Background="#1A1A1A"/>
                         <Track x:Name="PART_Track" IsDirectionReversed="True">
                             <Track.Thumb>
                                 <Thumb>
                                     <Thumb.Template>
                                         <ControlTemplate TargetType="Thumb">
-                                            <Border Background="#555555" CornerRadius="5" Margin="2"/>
+                                            <Border Background="#555555" Margin="2"/>
                                         </ControlTemplate>
                                     </Thumb.Template>
                                 </Thumb>
@@ -126,13 +131,13 @@
                     <Setter.Value>
                         <ControlTemplate TargetType="ScrollBar">
                             <Grid>
-                                <Border Background="#252525" CornerRadius="5"/>
+                                <Border Background="#1A1A1A"/>
                                 <Track x:Name="PART_Track" IsDirectionReversed="False">
                                     <Track.Thumb>
                                         <Thumb>
                                             <Thumb.Template>
                                                 <ControlTemplate TargetType="Thumb">
-                                                    <Border Background="#555555" CornerRadius="5" Margin="2"/>
+                                                    <Border Background="#555555" Margin="2"/>
                                                 </ControlTemplate>
                                             </Thumb.Template>
                                         </Thumb>

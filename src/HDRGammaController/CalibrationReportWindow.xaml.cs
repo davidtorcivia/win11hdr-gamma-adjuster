@@ -266,7 +266,18 @@ namespace HDRGammaController
             Vm.IsApplyEnabled = false;
             Vm.IsVerifyEnabled = false;
             Vm.IsWhiteToolsEnabled = false;
-            Vm.StatusText = "Saved report. Apply, Verify and White Tools are available only in the report that opens right after a calibration.";
+
+            // These actions all need the live calibration session (apply context, connected
+            // probe, freshly-built LUT). None of that survives into a saved report, so hide
+            // them outright rather than leaving dead disabled buttons. Export Report and Close
+            // still work (rebuilt from the persisted summary).
+            ApplyButton.Visibility = Visibility.Collapsed;
+            VerifyButton.Visibility = Visibility.Collapsed;
+            WhiteToolsButton.Visibility = Visibility.Collapsed;
+            DetailedVerifyCheck.Visibility = Visibility.Collapsed;
+            ExportButton.Visibility = Visibility.Collapsed; // Export LUT: no LUT is persisted
+
+            Vm.StatusText = "Saved report. Use Export Report to print or save a PDF.";
             Vm.StatusBrush = CalibrationReportViewModel.DimBrush;
         }
 

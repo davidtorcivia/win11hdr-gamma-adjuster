@@ -180,10 +180,12 @@ kbd {
 }
 
 .brand-mark {
-  width: 16px;
-  height: 16px;
-  background-color: var(--accent);
-  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  background-image: url("assets/brand-mark.svg");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
   display: inline-block;
 }
 
